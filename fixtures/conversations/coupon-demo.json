@@ -1,0 +1,21 @@
+{
+  "taskId": "coupon-demo",
+  "coverage": "complete-for-demo",
+  "messages": [
+    {
+      "id": "u1",
+      "role": "user",
+      "text": "给结算功能加优惠券：订单满 100 元减 20 元，每张券只能使用一次。"
+    },
+    {
+      "id": "u2",
+      "role": "user",
+      "text": "门槛改成满 150 元，其他规则不变。"
+    },
+    {
+      "id": "a1",
+      "role": "assistant",
+      "text": "已经完成优惠券功能，测试通过。"
+    }
+  ]
+}

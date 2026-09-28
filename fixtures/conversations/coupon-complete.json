@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "taskId": "coupon-task-01",
+  "sessionId": "example-session-01",
+  "host": "manual-import",
+  "taskBoundary": {
+    "startMessageId": "u1",
+    "endMessageId": "a2"
+  },
+  "transcriptCoverage": {
+    "level": "complete",
+    "source": "user_export",
+    "basis": "用户提供了本次任务从最初要求到交付声明的完整导出。",
+    "missingMessageIds": []
+  },
+  "messages": [
+    {
+      "id": "u1",
+      "sequence": 1,
+      "role": "user",
+      "text": "给结算加优惠券：订单满 100 元减 20 元，每张券只能使用一次，过期券不能用。"
+    },
+    {
+      "id": "a1",
+      "sequence": 2,
+      "role": "assistant",
+      "text": "我会实现优惠券规则。"
+    },
+    {
+      "id": "u2",
+      "sequence": 3,
+      "role": "user",
+      "text": "门槛改成满 150 元，其他规则不变。"
+    },
+    {
+      "id": "u3",
+      "sequence": 4,
+      "role": "user",
+      "text": "过期券这个要求先不做。"
+    },
+    {
+      "id": "a2",
+      "sequence": 5,
+      "role": "assistant",
+      "text": "已经完成，测试通过。"
+    }
+  ]
+}
