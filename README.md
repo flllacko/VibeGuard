@@ -1,6 +1,6 @@
 # VibeGuard 开发原型
 
-VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证据，分别报告已验证、验证失败、无法验证。当前已完成 **M1 受控样例证据闭环**，正在实施 **M2 完整对话与有效要求整理**。尚未实现动态验收规划、外部项目隔离、MCP 或宿主钩子。
+VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证据，分别报告已验证、验证失败、无法验证。当前已完成 **M1 受控样例证据闭环**；**M2 对话整理**和 **M3 需求驱动规划**已部分实现。尚未用真实模型验证需求整理和动态规划，也未实现外部项目隔离、MCP 或宿主钩子。
 
 ## 当前可运行效果
 
@@ -35,3 +35,25 @@ node dist/cli.js resolution <要求整理ID> --format json
 `resolve` 调用 Pi 的模型 API，让模型提出要求新增、修改、取消事件；程序核对每条用户消息的去向及每段原话是否逐字存在。若缺模型凭据、模型输出错误或材料不完整，保存缺口并退出为“无法完成整理”。当前环境尚未配置模型 API 密钥，**真实模型理解能力未验证**。不要把密钥写进对话 JSON、项目文件或聊天消息；用所选提供商的环境变量配置。消息都有处理记录也不能证明模型绝不会漏掉语义上的要求，正式报告仍要展示清单供人复核。
 
 Pi 依赖采用官方 `@earendil-works/pi-ai` 0.87.1。pnpm 的两个非必需传递依赖构建脚本已明确禁用；当前计划先使用 OpenAI 路径，其他提供商使用前需单独验证对应依赖是否可运行。
+
+## 冻结计划并执行（M3 人工样例）
+
+M3 的程序规则要求每条当前有效要求都有检查目标，或明确说明暂时无法检查；已取消的要求不能重新变成必需项。计划包含 HTTP 操作和预期断言，程序固定计划摘要后才执行。当前演示计划仍由人手写，下面的命令用于验证执行和覆盖规则，**不证明模型已经会自动规划**。
+
+```powershell
+node dist/cli.js demo-plan --variant correct
+node dist/cli.js demo-plan --variant faulty
+node dist/cli.js demo-plan --variant unavailable
+node dist/cli.js planned-report <运行ID>
+```
+
+正确版的 150/149 门槛检查通过，但“一次使用”仍未检查，因此整个任务输出 `UNVERIFIABLE`。缺陷版会在 149 元订单的保存记录中发现 20 元错误优惠，输出 `FAILED`。服务不可用时输出 `UNVERIFIABLE`。三次运行使用相同的计划摘要，目标代码摘要随变体变化；报告及逐步 HTTP 证据保存在 `.vibeguard/planned-runs/`，可在新进程读取并核对哈希。`demo-plan` 的退出码按整个任务结论给出：0 已验证、1 失败、2 无法验证、3 参数或内部错误；上面的旧 `verify` 命令仍按门槛检查范围给出退出码。
+
+`plan` 已提供模型规划入口：它读取一份**已完成要求整理**的记录与用户授权的 API 描述文件，让模型提出检查，再由程序拒绝漏项、越界接口和自行提交的结论。这个入口目前只冻结并保存计划，尚不能从该命令直接执行模型计划。当前没有可用 API 凭据，也没有成功的真实模型规划记录。
+
+```powershell
+node dist/cli.js plan --resolution <要求整理ID> --profile fixtures/profiles/coupon-api.json --provider openai --model <模型ID>
+node dist/cli.js plan-record <计划摘要> --format json
+```
+
+受控演示报告现在把用户原话、每条要求的结论和执行证据 ID 放在一起。本地文件哈希只能发现读取时的文件变化；若干活 Agent 与 VibeGuard 共享证据目录的写权限，不能据此宣称证据无法伪造。

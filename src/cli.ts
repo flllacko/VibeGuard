@@ -7,6 +7,12 @@ import { readConversation } from "./intake.js";
 import { PiRequirementGateway } from "./pi-gateway.js";
 import { currentRequirements, resolveRequirements, type Resolution } from "./requirements.js";
 import { readResolution, saveConversationCopy, saveResolution } from "./resolution-storage.js";
+import { startDemoServer } from "./demo-app.js";
+import { demoSnapshotHash, makeManualDemoPlan } from "./demo-plan.js";
+import { readPlannedRun, runFrozenPlan, savePlannedRun, type PlannedRunReport } from "./plan-runner.js";
+import { readApiProfile, PiPlanGateway } from "./pi-plan-gateway.js";
+import { assertPlanRoutes, freezePlan } from "./planning.js";
+import { readPlanRecord, savePlanRecord } from "./plan-storage.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -21,7 +27,7 @@ if (dataFlag >= 0) {
 
 async function main(): Promise<void> {
   if (!command || command === "help") {
-    console.log("Usage: vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID --model ID [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
+    console.log("Usage: vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID --model ID [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard plan --resolution ID --profile FILE --provider ID --model ID\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
     return;
   }
   if (command === "intake" || command === "resolve") {
@@ -65,6 +71,66 @@ async function main(): Promise<void> {
     const resolution = await readResolution(args[0], dataDir);
     if (outputFormat(args) === "json") console.log(JSON.stringify(resolution, null, 2));
     else printResolution(resolution);
+    return;
+  }
+  if (command === "plan") {
+    const resolutionId = option(args, "--resolution");
+    const profilePath = option(args, "--profile");
+    const provider = option(args, "--provider");
+    const model = option(args, "--model");
+    if (!resolutionId || !profilePath || !provider || !model) throw new Error("plan requires --resolution, --profile, --provider and --model");
+    const resolution = await readResolution(resolutionId, dataDir);
+    const profile = await readApiProfile(profilePath);
+    try {
+      const generation = await new PiPlanGateway(provider, model).propose(resolution, profile);
+      const plan = freezePlan(resolution, generation.proposal, "model-proposal");
+      assertPlanRoutes(plan, new Set(profile.routes.map(route => `${route.method} ${route.pathTemplate}`)));
+      const path = await savePlanRecord(dataDir, { plan, generation: { model: generation.model, promptHash: generation.promptHash, usage: generation.usage, profileId: profile.profileId } });
+      console.log(`计划已冻结：${plan.planHash}`);
+      for (const row of plan.coverage) console.log(`${row.requirementId}：${row.status}${row.gapReason ? `，${row.gapReason}` : ""}`);
+      console.log(`计划文件：${path}`);
+    } catch (error) {
+      console.error(`无法形成可执行计划：${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 2;
+    }
+    return;
+  }
+  if (command === "plan-record") {
+    if (!args[0]) throw new Error("Missing PLAN_HASH");
+    const record = await readPlanRecord(dataDir, args[0]);
+    if (outputFormat(args) === "json") console.log(JSON.stringify(record, null, 2));
+    else {
+      console.log(`计划 ${record.plan.planHash}｜模型 ${record.generation.model}｜范围 ${record.generation.profileId}`);
+      for (const row of record.plan.coverage) console.log(`${row.requirementId}：${row.status}${row.gapReason ? `，${row.gapReason}` : ""}`);
+    }
+    return;
+  }
+  if (command === "demo-plan") {
+    const variant = option(args, "--variant") ?? "faulty";
+    if (variant !== "correct" && variant !== "faulty" && variant !== "unavailable") throw new Error("Invalid --variant");
+    const { resolution, plan } = await makeManualDemoPlan();
+    const server = await startDemoServer(variant === "faulty");
+    let result;
+    try {
+      if (variant === "unavailable") await server.close();
+      result = await runFrozenPlan(plan, resolution, server.baseUrl, variant === "unavailable" ? "受控演示应用已关闭" : "新启动的受控演示应用", await demoSnapshotHash(variant), new Set(["POST /checkout", "GET /orders/{order-id}"]));
+    } finally {
+      if (variant !== "unavailable") await server.close();
+    }
+    const directory = await savePlannedRun(dataDir, result.report, result.evidence);
+    if (outputFormat(args) === "json") console.log(JSON.stringify(result.report, null, 2));
+    else {
+      printPlannedReport(result.report);
+      console.log(`原始证据目录：${directory}`);
+    }
+    process.exitCode = exitCode(result.report.verdict);
+    return;
+  }
+  if (command === "planned-report") {
+    if (!args[0]) throw new Error("Missing RUN_ID");
+    const report = await readPlannedRun(dataDir, args[0]);
+    if (outputFormat(args) === "json") console.log(JSON.stringify(report, null, 2));
+    else printPlannedReport(report);
     return;
   }
   const store = await EvidenceStore.open(dataDir);
@@ -146,6 +212,24 @@ function printResolution(resolution: Resolution): void {
   for (const issue of resolution.coverageIssues) console.log(`⚠ ${issue}`);
   for (const chunk of resolution.processing) console.log(`处理块 ${chunk.chunk}：${chunk.status}${chunk.model ? `，模型 ${chunk.model}` : ""}${chunk.error ? `，${chunk.error}` : ""}`);
   console.log(`原文 SHA-256：${resolution.conversationSha256}`);
+}
+
+function printPlannedReport(report: PlannedRunReport): void {
+  const symbol = { VERIFIED: "✅", FAILED: "❌", UNVERIFIABLE: "⚠" } as const;
+  console.log(`VibeGuard M3 人工计划样例｜运行 ${report.runId}｜整个任务 ${symbol[report.verdict]} ${report.verdict}`);
+  for (const requirement of report.requirements) {
+    console.log(`${symbol[requirement.verdict]} ${requirement.normalized}`);
+    for (const ref of requirement.sourceRefs) console.log(`  用户原话 [${ref.messageId}:${ref.start}-${ref.end}]：${ref.quote}`);
+    console.log(`  原因：${requirement.reason}`);
+    const evidenceIds = requirement.evidenceIds ?? [];
+    console.log(`  执行证据：${evidenceIds.length ? evidenceIds.join(", ") : requirement.evidenceIds ? "无；本轮未执行检查" : "旧版报告未聚合证据 ID"}`);
+  }
+  for (const criterion of report.criteria) for (const check of criterion.checks) {
+    console.log(`${symbol[check.verdict]} ${check.checkId}：${check.reason}`);
+    console.log(`  原始证据 ID：${check.evidenceIds.join(", ")}`);
+  }
+  for (const limitation of report.limitations) console.log(`范围限制：${limitation}`);
+  console.log(`计划摘要：${report.planHash}；演示目标摘要：${report.targetSnapshotHash}`);
 }
 
 main().catch(error => {

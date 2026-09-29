@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "profileId": "coupon-demo-api",
+  "description": "受控优惠券演示 API；金额单位为整数分。",
+  "routes": [
+    {
+      "method": "POST",
+      "pathTemplate": "/checkout",
+      "description": "创建订单并尝试使用一张优惠券。",
+      "requestExample": { "amountCents": 15000, "couponCode": "UNUSED-COUPON" },
+      "responseExample": { "orderId": "1", "amountCents": 15000, "discountCents": 2000, "totalCents": 13000 }
+    },
+    {
+      "method": "GET",
+      "pathTemplate": "/orders/{order-id}",
+      "description": "按上一请求得到的订单 ID 查询实际保存的订单。",
+      "responseExample": { "amountCents": 15000, "discountCents": 2000, "totalCents": 13000 }
+    }
+  ]
+}
