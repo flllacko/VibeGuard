@@ -1,6 +1,6 @@
 # VibeGuard 开发原型
 
-VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证据，分别报告已验证、验证失败、无法验证。当前已完成 **M1 受控样例证据闭环**；**M2 对话整理**和 **M3 需求驱动规划**已部分实现。DeepSeek Flash 已在单个公开样例上真实整理要求、生成计划，并让同一计划在正确/缺陷/不可用的受控应用上产生三态证据；尚未实现外部项目隔离、MCP 或宿主钩子。
+VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证据，分别报告已验证、验证失败、无法验证。当前已完成 **M1 受控样例证据闭环**；**M2 对话整理**和 **M3 需求驱动规划**已部分实现。DeepSeek Flash 已在公开样例及两份新合成对话中整理要求；新优惠券计划在正确、两种缺陷、不可用实现上产生预期证据，详见 [保留样本开发评估](docs/heldout-evaluation-2026-09-29.md)。尚未实现外部项目隔离、MCP 或宿主钩子。
 
 ## 当前可运行效果
 
@@ -66,7 +66,7 @@ Remove-Variable vgKey
 
 当前内置默认映射：`deepseek → deepseek/deepseek-flash`，`kimi → moonshotai-cn/kimi-k3`，`kimi-global → moonshotai/kimi-k3`。前半段是 Pi 实际调用的 provider；每次真实调用仍需以该账户实测。模型目录会变化，VibeGuard 的默认值不会偷偷自动切换；需要换模型时显式加 `--model`。DeepSeek 的 [更新日志](https://api-docs.deepseek.com/updates/) 和 Kimi 的 [API 概览](https://www.kimi.ai/help/kimi-api/api-overview)列出了这两个模型 ID。
 
-豆包、硅基流动、百炼目前**没有** VibeGuard 的同格式入口，不能仅设置密钥就使用 `--provider doubao/siliconflow/bailian`。它们各自还需要确认接口地址、模型 ID、账户地域或权限，并通过真实调用验证；接入后才会加入上面的默认列表。当前 `verify --variant ...` 是受控演示命令，**还不能**执行 `vibeguard verify task.json --provider deepseek` 这样的完整自动验收。M2/M3 的真实模型流程是 `resolve` → `plan`，模型计划执行与外部项目隔离仍在开发。
+豆包、硅基流动、百炼目前**没有** VibeGuard 的同格式入口，不能仅设置密钥就使用 `--provider doubao/siliconflow/bailian`。它们各自还需要确认接口地址、模型 ID、账户地域或权限，并通过真实调用验证；接入后才会加入上面的默认列表。当前 `verify --variant ...` 是受控演示命令，**还不能**执行 `vibeguard verify task.json --provider deepseek` 这样的完整自动验收。M2/M3 的真实模型流程是 `resolve` → `plan` → `run-demo-plan`（仅内置受控样例）；外部项目隔离执行仍在开发。
 
 ## 冻结计划并执行（M3 受控演示）
 
@@ -91,6 +91,8 @@ node dist/cli.js run-demo-plan --plan <计划摘要> --variant faulty
 node dist/cli.js run-demo-plan --plan <计划摘要> --variant unavailable
 ```
 
-`run-demo-plan` 只接受内置优惠券对话和受控演示 API，不会启动任意外部 Agent 代码。一次真实 DeepSeek Flash 计划在正确版得到两条要求均 `VERIFIED`，缺陷版发现低于 150 元 1 分时仍优惠 20 元而判 `FAILED`，服务不可用版判 `UNVERIFIABLE`。同一计划摘要和原话引用贯穿三次运行；仍需用隐藏任务评估模型是否经常漏条件或生成错误预期。
+`run-demo-plan` 只接受内置优惠券对话和受控演示 API，不会启动任意外部 Agent 代码。一次真实 DeepSeek Flash 计划在正确版得到两条要求均 `VERIFIED`，缺陷版发现低于 150 元 1 分时仍优惠 20 元而判 `FAILED`，服务不可用版判 `UNVERIFIABLE`。同一计划摘要和原话引用贯穿三次运行；保留样本已有首次开发评估，仍需更多独立任务估计漏条件和错误预期的发生频率。
+
+开发评估还提供 `node dist/evaluate-heldout.js --plan <保留样本计划摘要>`：它只接受保留的优惠券任务及中性接口说明，分别运行正确版、旧门槛版、旧优惠金额版和服务不可用版。该脚本是评估工具，不能用于验收任意项目；输入、标准答案和本次实测结果见上方评估文档。
 
 受控演示报告现在把用户原话、每条要求的结论和执行证据 ID 放在一起。本地文件哈希只能发现读取时的文件变化；若干活 Agent 与 VibeGuard 共享证据目录的写权限，不能据此宣称证据无法伪造。

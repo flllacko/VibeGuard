@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "profileId": "coupon-evaluation-api",
+  "description": "评估用结算 API。金额单位为整数分；API 描述不提供本次业务规则的具体金额。",
+  "routes": [
+    {
+      "method": "POST",
+      "pathTemplate": "/checkout",
+      "description": "创建订单并尝试使用优惠券。请求体含 amountCents 与 couponCode。",
+      "successStatus": 201,
+      "requestExample": { "amountCents": "integer", "couponCode": "string" },
+      "responseExample": { "orderId": "string", "amountCents": "integer", "discountCents": "integer", "totalCents": "integer" }
+    },
+    {
+      "method": "GET",
+      "pathTemplate": "/orders/{order-id}",
+      "description": "使用前一步返回的订单 ID 查询保存的订单。",
+      "successStatus": 200,
+      "responseExample": { "amountCents": "integer", "discountCents": "integer", "totalCents": "integer" }
+    }
+  ],
+  "isolationRules": [
+    { "method": "POST", "pathTemplate": "/checkout", "bodyField": "couponCode" }
+  ]
+}

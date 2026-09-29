@@ -7,6 +7,19 @@ export interface DemoServer {
 }
 
 export async function startDemoServer(faulty: boolean): Promise<DemoServer> {
+  return startConfiguredCouponServer({ thresholdCents: faulty ? 14900 : 15000, discountCents: 2000 });
+}
+
+export interface CouponRules {
+  thresholdCents: number;
+  discountCents: number;
+}
+
+export async function startConfiguredCouponServer(rules: CouponRules): Promise<DemoServer> {
+  if (!Number.isSafeInteger(rules.thresholdCents) || rules.thresholdCents < 0 ||
+      !Number.isSafeInteger(rules.discountCents) || rules.discountCents < 0) {
+    throw new Error("Coupon rules must use nonnegative integer cents");
+  }
   const orders = new Map<string, { amountCents: number; discountCents: number; totalCents: number }>();
   const usedCoupons = new Set<string>();
   let nextId = 1;
@@ -22,8 +35,7 @@ export async function startDemoServer(faulty: boolean): Promise<DemoServer> {
           res.writeHead(400).end(JSON.stringify({ error: "invalid input" }));
           return;
         }
-        const thresholdCents = faulty ? 14900 : 15000;
-        const discountCents = body.amountCents >= thresholdCents && !usedCoupons.has(body.couponCode) ? 2000 : 0;
+        const discountCents = body.amountCents >= rules.thresholdCents && !usedCoupons.has(body.couponCode) ? rules.discountCents : 0;
         if (discountCents) usedCoupons.add(body.couponCode);
         const orderId = String(nextId++);
         const order = {

@@ -7,7 +7,7 @@ import { assertPlanRoutes, freezePlan, type PlanProposal } from "../planning.js"
 import { assertPlanMatchesProfile } from "../plan-profile.js";
 import type { ApiProfile } from "../pi-plan-gateway.js";
 import { sha256 } from "../storage.js";
-import { startDemoServer } from "../demo-app.js";
+import { startConfiguredCouponServer, startDemoServer } from "../demo-app.js";
 import { readPlannedRun, runFrozenPlan, savePlannedRun } from "../plan-runner.js";
 import type { Resolution } from "../requirements.js";
 
@@ -163,6 +163,27 @@ test("API profile blocks incorrect success status and reused stateful test data"
   const reusedCoupon = proposal(15000);
   reusedCoupon.criteria[0]!.checks[1]!.steps[0]!.body = { amountCents: 14900, couponCode: "at-boundary" };
   assert.throws(() => assertPlanMatchesProfile(freezePlan(baseResolution, reusedCoupon, "model-proposal"), demoProfile), /reuse couponCode/);
+});
+
+test("heldout coupon target has distinct correct, stale-threshold and stale-discount behavior", async () => {
+  for (const { rules, amountCents, expectedDiscount } of [
+    { rules: { thresholdCents: 12000, discountCents: 1500 }, amountCents: 11999, expectedDiscount: 0 },
+    { rules: { thresholdCents: 8000, discountCents: 1500 }, amountCents: 11999, expectedDiscount: 1500 },
+    { rules: { thresholdCents: 12000, discountCents: 1200 }, amountCents: 12000, expectedDiscount: 1200 },
+  ]) {
+    const server = await startConfiguredCouponServer(rules);
+    try {
+      const response = await fetch(`${server.baseUrl}/checkout`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ amountCents, couponCode: "FRESH" }),
+      });
+      assert.equal(response.status, 201);
+      const body = await response.json() as { discountCents: number };
+      assert.equal(body.discountCents, expectedDiscount);
+    } finally {
+      await server.close();
+    }
+  }
 });
 
 test("frozen checks execute real HTTP calls, inspect stored orders and persist evidence", async () => {

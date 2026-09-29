@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "taskId": "heldout-coupon-revisions-01",
+  "sessionId": "heldout-session-coupon-01",
+  "host": "manual-import",
+  "taskBoundary": { "startMessageId": "u1", "endMessageId": "a2" },
+  "transcriptCoverage": {
+    "level": "complete",
+    "source": "user_export",
+    "basis": "评估用的完整合成任务对话；标准答案不会传给需求整理器。",
+    "missingMessageIds": []
+  },
+  "messages": [
+    { "id": "u1", "sequence": 1, "role": "user", "text": "给结算增加优惠券：订单满 80 元减 12 元；每张券只允许使用一次；过期券不能使用。" },
+    { "id": "a1", "sequence": 2, "role": "assistant", "text": "我开始实现结算优惠券。" },
+    { "id": "u2", "sequence": 3, "role": "user", "text": "优惠金额改成 15 元，满 80 元的门槛保持。" },
+    { "id": "u3", "sequence": 4, "role": "user", "text": "门槛改成满 120 元，一次使用规则保留。" },
+    { "id": "u4", "sequence": 5, "role": "user", "text": "过期券规则这轮取消，先不验收。" },
+    { "id": "a2", "sequence": 6, "role": "assistant", "text": "已经完成，测试通过。" }
+  ]
+}

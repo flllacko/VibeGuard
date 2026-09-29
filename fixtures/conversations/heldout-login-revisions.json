@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "taskId": "heldout-login-revisions-01",
+  "sessionId": "heldout-session-login-01",
+  "host": "manual-import",
+  "taskBoundary": { "startMessageId": "u1", "endMessageId": "a2" },
+  "transcriptCoverage": {
+    "level": "complete",
+    "source": "user_export",
+    "basis": "评估用的完整合成任务对话；标准答案不会传给需求整理器。",
+    "missingMessageIds": []
+  },
+  "messages": [
+    { "id": "u1", "sequence": 1, "role": "user", "text": "增加邮箱密码登录：正确密码发 Token；错误密码返回 401；连续 5 次错误后锁定账号 10 分钟。" },
+    { "id": "a1", "sequence": 2, "role": "assistant", "text": "我会实现登录和异常处理。" },
+    { "id": "u2", "sequence": 3, "role": "user", "text": "锁定账号这条先取消。登录成功后的 Token 有效期改为 2 小时。" },
+    { "id": "a2", "sequence": 4, "role": "assistant", "text": "功能已完成，所有测试通过。" }
+  ]
+}

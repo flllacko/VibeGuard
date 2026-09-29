@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "taskId": "heldout-coupon-revisions-01",
+      "conversation": "../conversations/heldout-coupon-revisions.json",
+      "activeFacts": [
+        "订单金额达到 120 元时优惠 15 元",
+        "每张券只能使用一次"
+      ],
+      "cancelledFacts": ["过期券不能使用"],
+      "forbiddenActiveFacts": ["80 元门槛", "12 元优惠", "过期券限制"],
+      "planChecks": [
+        "使用独立的新券，在 12000 分订单上预期优惠 1500 分",
+        "使用另一张新券，在低于 12000 分的订单上预期优惠 0 分",
+        "同一张券先成功使用，再次使用时不应再次优惠"
+      ]
+    },
+    {
+      "taskId": "heldout-login-revisions-01",
+      "conversation": "../conversations/heldout-login-revisions.json",
+      "activeFacts": [
+        "正确邮箱密码登录后发 Token",
+        "错误密码返回 401",
+        "登录 Token 有效期为 2 小时"
+      ],
+      "cancelledFacts": ["连续 5 次错误后锁定账号 10 分钟"],
+      "forbiddenActiveFacts": ["必须锁定账号"]
+    }
+  ]
+}
