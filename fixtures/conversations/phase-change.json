@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "taskId": "phase-change-01",
+  "sessionId": "fixture-phase-change-01",
+  "host": "manual-import",
+  "taskBoundary": { "startMessageId": "u1", "endMessageId": "a2" },
+  "transcriptCoverage": {
+    "level": "complete",
+    "source": "user_export",
+    "basis": "专门核查阶段性指令是否在用户明确开工后失效的合成对话。",
+    "missingMessageIds": []
+  },
+  "messages": [
+    { "id": "u1", "sequence": 1, "role": "user", "text": "现在先讨论产品定位，暂时不要写代码；技术栈先不要确认。" },
+    { "id": "a1", "sequence": 2, "role": "assistant", "text": "先讨论产品定位。" },
+    { "id": "u2", "sequence": 3, "role": "user", "text": "方案定了，现在开始按实施文档写代码，技术栈确定用 TypeScript。" },
+    { "id": "a2", "sequence": 4, "role": "assistant", "text": "开始实施。" }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "taskId": "external-advice-not-adopted-01",
+  "sessionId": "fixture-external-advice-01",
+  "host": "manual-import",
+  "taskBoundary": { "startMessageId": "u1", "endMessageId": "a1" },
+  "transcriptCoverage": {
+    "level": "complete",
+    "source": "user_export",
+    "basis": "专门核查外部建议是否被误判为用户已采纳要求的合成对话。",
+    "missingMessageIds": []
+  },
+  "messages": [
+    {
+      "id": "u1",
+      "sequence": 1,
+      "role": "user",
+      "text": "这是 DeepSeek 给我的建议：“证据必须签名并上传透明日志。”你不必觉得它是对的，请先评估这个方案。另外，请给我一份产品方案。"
+    },
+    {
+      "id": "a1",
+      "sequence": 2,
+      "role": "assistant",
+      "text": "我会评估这条建议，并提供产品方案。"
+    }
+  ]
+}
