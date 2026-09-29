@@ -13,6 +13,7 @@ import { readPlannedRun, runFrozenPlan, savePlannedRun, type PlannedRunReport } 
 import { readApiProfile, PiPlanGateway } from "./pi-plan-gateway.js";
 import { assertPlanRoutes, freezePlan } from "./planning.js";
 import { readPlanRecord, savePlanRecord } from "./plan-storage.js";
+import { curatedProviders, selectModel } from "./model-selection.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -27,7 +28,14 @@ if (dataFlag >= 0) {
 
 async function main(): Promise<void> {
   if (!command || command === "help") {
-    console.log("Usage: vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID --model ID [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard plan --resolution ID --profile FILE --provider ID --model ID\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
+    console.log("Usage: vibeguard providers\n       vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID [--model ID] [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard plan --resolution ID --profile FILE --provider ID [--model ID]\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
+    return;
+  }
+  if (command === "providers") {
+    for (const provider of curatedProviders) {
+      console.log(`${provider.id}｜默认 ${provider.defaultModel}｜${provider.envVar} ${process.env[provider.envVar] ? "已设置" : "未设置"}｜${provider.description}`);
+    }
+    console.log("仅显示是否设置，不读取或打印密钥值；模型 API 是否可用仍需实际调用确认。");
     return;
   }
   if (command === "intake" || command === "resolve") {
@@ -56,10 +64,8 @@ async function main(): Promise<void> {
       process.exitCode = intake.coverageIssues.length ? 2 : 0;
       return;
     }
-    const provider = option(args, "--provider");
-    const model = option(args, "--model");
-    if (!provider || !model) throw new Error("resolve requires --provider ID and --model ID");
-    const resolution = await resolveRequirements(intake, new PiRequirementGateway(provider, model));
+    const selection = selectModel(option(args, "--provider"), option(args, "--model"));
+    const resolution = await resolveRequirements(intake, new PiRequirementGateway(selection.piProvider, selection.modelId));
     await saveResolution(resolution, dataDir);
     if (format === "json") console.log(JSON.stringify(resolution, null, 2));
     else printResolution(resolution);
@@ -76,17 +82,16 @@ async function main(): Promise<void> {
   if (command === "plan") {
     const resolutionId = option(args, "--resolution");
     const profilePath = option(args, "--profile");
-    const provider = option(args, "--provider");
-    const model = option(args, "--model");
-    if (!resolutionId || !profilePath || !provider || !model) throw new Error("plan requires --resolution, --profile, --provider and --model");
+    if (!resolutionId || !profilePath) throw new Error("plan requires --resolution and --profile");
+    const selection = selectModel(option(args, "--provider"), option(args, "--model"));
     const resolution = await readResolution(resolutionId, dataDir);
     const profile = await readApiProfile(profilePath);
     try {
-      const generation = await new PiPlanGateway(provider, model).propose(resolution, profile);
+      const generation = await new PiPlanGateway(selection.piProvider, selection.modelId).propose(resolution, profile);
       const plan = freezePlan(resolution, generation.proposal, "model-proposal");
       assertPlanRoutes(plan, new Set(profile.routes.map(route => `${route.method} ${route.pathTemplate}`)));
       const path = await savePlanRecord(dataDir, { plan, generation: { model: generation.model, promptHash: generation.promptHash, usage: generation.usage, profileId: profile.profileId } });
-      console.log(`计划已冻结：${plan.planHash}`);
+      console.log(`计划结构已冻结（未执行，预期值与测试数据仍须审查）：${plan.planHash}`);
       for (const row of plan.coverage) console.log(`${row.requirementId}：${row.status}${row.gapReason ? `，${row.gapReason}` : ""}`);
       console.log(`计划文件：${path}`);
     } catch (error) {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { ConversationSchema, inspectConversation } from "../intake.js";
+import { requirementModelPayload } from "../pi-gateway.js";
 import { currentRequirements, resolveRequirements, type GatewayInput, type GatewayOutput, type RequirementGateway } from "../requirements.js";
 
 const fixtureUrl = new URL("../../fixtures/conversations/coupon-complete.json", import.meta.url);
@@ -9,6 +10,17 @@ const fixtureUrl = new URL("../../fixtures/conversations/coupon-complete.json", 
 async function fixture() {
   return inspectConversation(ConversationSchema.parse(JSON.parse(await readFile(fixtureUrl, "utf8"))));
 }
+
+test("model sees full conversation but only user messages have referencable IDs", async () => {
+  const intake = await fixture();
+  const payload = requirementModelPayload({ taskId: intake.conversation.taskId, messages: intake.conversation.messages, knownRequirements: [] }) as {
+    allowedUserMessageIds: string[];
+    messages: Array<{ id?: string; role: string; text: string }>;
+  };
+  assert.deepEqual(payload.allowedUserMessageIds, ["u1", "u2", "u3"]);
+  assert.equal(payload.messages.length, 5);
+  assert.equal(payload.messages.find(item => item.text === "已经完成，测试通过。")?.id, undefined);
+});
 
 class FixtureGateway implements RequirementGateway {
   async propose(input: GatewayInput): Promise<GatewayOutput> {

@@ -107,7 +107,7 @@ async function runHttpSequence(check: FrozenPlan["criteria"][number]["checks"][n
   const captures = new Map<string, string>();
   const evidenceIds: string[] = [];
   for (const step of check.steps) {
-    const path = step.pathTemplate.replace(/\{([a-z][a-z0-9-]*)\}/g, (_match, name: string) => encodeURIComponent(captures.get(name) ?? ""));
+    const path = step.pathTemplate.replace(/\{([A-Za-z][A-Za-z0-9_-]*)\}/g, (_match, name: string) => encodeURIComponent(captures.get(name) ?? ""));
     const url = new URL(path, base);
     if (url.origin !== base.origin) throw new Error("Step escaped local target origin");
     const item: HttpStepEvidence = {

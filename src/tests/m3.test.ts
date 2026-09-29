@@ -133,6 +133,16 @@ test("a plan cannot request a route outside the authorized API profile", async (
   );
 });
 
+test("authorized dynamic route accepts equivalent capture names with underscore or camelCase", () => {
+  const compatible = proposal(15000);
+  compatible.criteria[0]!.checks[0]!.steps[0]!.captures[0]!.name = "order_id";
+  compatible.criteria[0]!.checks[0]!.steps[1]!.pathTemplate = "/orders/{order_id}";
+  compatible.criteria[0]!.checks[1]!.steps[0]!.captures[0]!.name = "orderId";
+  compatible.criteria[0]!.checks[1]!.steps[1]!.pathTemplate = "/orders/{orderId}";
+  const plan = freezePlan(baseResolution, compatible, "model-proposal");
+  assert.doesNotThrow(() => assertPlanRoutes(plan, demoRoutes));
+});
+
 test("frozen checks execute real HTTP calls, inspect stored orders and persist evidence", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "vibeguard-m3-"));
   try {

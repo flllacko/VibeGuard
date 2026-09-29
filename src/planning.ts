@@ -2,7 +2,7 @@ import { z } from "zod";
 import { sha256 } from "./storage.js";
 import { currentRequirements, type Resolution } from "./requirements.js";
 
-const Identifier = z.string().regex(/^[a-z][a-z0-9-]*$/);
+const Identifier = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/);
 
 const JsonAssertionSchema = z.object({
   pointer: z.string().regex(/^(?:\/(?:[^/~]|~[01])*)*$/),
@@ -120,10 +120,15 @@ export function freezePlan(resolution: Resolution, candidate: unknown, source: F
 }
 
 export function assertPlanRoutes(plan: Pick<FrozenPlan, "criteria">, allowedRoutes: ReadonlySet<string>): void {
+  const allowedShapes = new Set([...allowedRoutes].map(routeShape));
   for (const criterion of plan.criteria) for (const check of criterion.checks) for (const step of check.steps) {
     const route = `${step.method} ${step.pathTemplate}`;
-    if (!allowedRoutes.has(route)) throw new Error(`HTTP route is outside the authorized profile: ${route}`);
+    if (!allowedShapes.has(routeShape(route))) throw new Error(`HTTP route is outside the authorized profile: ${route}`);
   }
+}
+
+function routeShape(route: string): string {
+  return route.replace(/\{[A-Za-z][A-Za-z0-9_-]*\}/g, "{}");
 }
 
 function validatePathTemplate(path: string, captures: Set<string>): void {
@@ -132,9 +137,9 @@ function validatePathTemplate(path: string, captures: Set<string>): void {
   }
   for (const match of path.matchAll(/\{([^{}]+)\}/g)) {
     const name = match[1]!;
-    if (!/^[a-z][a-z0-9-]*$/.test(name) || !captures.has(name)) throw new Error(`HTTP path uses unknown capture ${name}`);
+    if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name) || !captures.has(name)) throw new Error(`HTTP path uses unknown capture ${name}`);
   }
-  if (path.replace(/\{[a-z][a-z0-9-]*\}/g, "").includes("{") || path.replace(/\{[a-z][a-z0-9-]*\}/g, "").includes("}")) {
+  if (path.replace(/\{[A-Za-z][A-Za-z0-9_-]*\}/g, "").includes("{") || path.replace(/\{[A-Za-z][A-Za-z0-9_-]*\}/g, "").includes("}")) {
     throw new Error(`Invalid HTTP path template: ${path}`);
   }
 }
