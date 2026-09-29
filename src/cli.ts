@@ -11,12 +11,15 @@ import { startDemoServer } from "./demo-app.js";
 import { demoSnapshotHash, makeManualDemoPlan } from "./demo-plan.js";
 import { readPlannedRun, runFrozenPlan, savePlannedRun, type PlannedRunReport } from "./plan-runner.js";
 import { readApiProfile, PiPlanGateway } from "./pi-plan-gateway.js";
-import { assertPlanRoutes, freezePlan } from "./planning.js";
+import { freezePlan, type FrozenPlan } from "./planning.js";
+import { assertPlanMatchesProfile, profileHash } from "./plan-profile.js";
+import type { ApiProfile } from "./pi-plan-gateway.js";
 import { readPlanRecord, savePlanRecord } from "./plan-storage.js";
 import { curatedProviders, selectModel } from "./model-selection.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
+const demoProfilePath = fileURLToPath(new URL("../fixtures/profiles/coupon-api.json", import.meta.url));
 const dataFlag = args.indexOf("--data-dir");
 let dataDir = fileURLToPath(new URL("../.vibeguard/", import.meta.url));
 if (dataFlag >= 0) {
@@ -28,7 +31,7 @@ if (dataFlag >= 0) {
 
 async function main(): Promise<void> {
   if (!command || command === "help") {
-    console.log("Usage: vibeguard providers\n       vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID [--model ID] [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard plan --resolution ID --profile FILE --provider ID [--model ID]\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
+    console.log("Usage: vibeguard providers\n       vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID [--model ID] [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard plan --resolution ID --profile FILE --provider ID [--model ID]\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard run-demo-plan --plan PLAN_HASH --variant correct|faulty|unavailable [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
     return;
   }
   if (command === "providers") {
@@ -89,8 +92,8 @@ async function main(): Promise<void> {
     try {
       const generation = await new PiPlanGateway(selection.piProvider, selection.modelId).propose(resolution, profile);
       const plan = freezePlan(resolution, generation.proposal, "model-proposal");
-      assertPlanRoutes(plan, new Set(profile.routes.map(route => `${route.method} ${route.pathTemplate}`)));
-      const path = await savePlanRecord(dataDir, { plan, generation: { model: generation.model, promptHash: generation.promptHash, usage: generation.usage, profileId: profile.profileId } });
+      assertPlanMatchesProfile(plan, profile);
+      const path = await savePlanRecord(dataDir, { plan, generation: { model: generation.model, promptHash: generation.promptHash, usage: generation.usage, profileId: profile.profileId, profileSha256: profileHash(profile) } });
       console.log(`计划结构已冻结（未执行，预期值与测试数据仍须审查）：${plan.planHash}`);
       for (const row of plan.coverage) console.log(`${row.requirementId}：${row.status}${row.gapReason ? `，${row.gapReason}` : ""}`);
       console.log(`计划文件：${path}`);
@@ -114,14 +117,29 @@ async function main(): Promise<void> {
     const variant = option(args, "--variant") ?? "faulty";
     if (variant !== "correct" && variant !== "faulty" && variant !== "unavailable") throw new Error("Invalid --variant");
     const { resolution, plan } = await makeManualDemoPlan();
-    const server = await startDemoServer(variant === "faulty");
-    let result;
-    try {
-      if (variant === "unavailable") await server.close();
-      result = await runFrozenPlan(plan, resolution, server.baseUrl, variant === "unavailable" ? "受控演示应用已关闭" : "新启动的受控演示应用", await demoSnapshotHash(variant), new Set(["POST /checkout", "GET /orders/{order-id}"]));
-    } finally {
-      if (variant !== "unavailable") await server.close();
+    const result = await runDemoVariant(plan, resolution, variant, await readApiProfile(demoProfilePath));
+    const directory = await savePlannedRun(dataDir, result.report, result.evidence);
+    if (outputFormat(args) === "json") console.log(JSON.stringify(result.report, null, 2));
+    else {
+      printPlannedReport(result.report);
+      console.log(`原始证据目录：${directory}`);
     }
+    process.exitCode = exitCode(result.report.verdict);
+    return;
+  }
+  if (command === "run-demo-plan") {
+    const hash = option(args, "--plan");
+    const variant = option(args, "--variant") ?? "faulty";
+    if (!hash) throw new Error("run-demo-plan requires --plan PLAN_HASH");
+    if (variant !== "correct" && variant !== "faulty" && variant !== "unavailable") throw new Error("Invalid --variant");
+    const record = await readPlanRecord(dataDir, hash);
+    if (record.plan.source !== "model-proposal") throw new Error("run-demo-plan requires a model proposal");
+    const profile = await readApiProfile(demoProfilePath);
+    if (record.generation.profileSha256 !== profileHash(profile)) throw new Error("Plan API profile differs from the current demo profile");
+    const resolution = await readResolution(record.plan.resolutionId, dataDir);
+    const demo = await makeManualDemoPlan();
+    if (resolution.conversationSha256 !== demo.resolution.conversationSha256) throw new Error("Plan was not made for the controlled demo conversation");
+    const result = await runDemoVariant(record.plan, resolution, variant, profile);
     const directory = await savePlannedRun(dataDir, result.report, result.evidence);
     if (outputFormat(args) === "json") console.log(JSON.stringify(result.report, null, 2));
     else {
@@ -186,6 +204,16 @@ function exitCode(verdict: Verdict): number {
   return verdict === "VERIFIED" ? 0 : verdict === "FAILED" ? 1 : 2;
 }
 
+async function runDemoVariant(plan: FrozenPlan, resolution: Resolution, variant: "correct" | "faulty" | "unavailable", profile: ApiProfile): ReturnType<typeof runFrozenPlan> {
+  const server = await startDemoServer(variant === "faulty");
+  try {
+    if (variant === "unavailable") await server.close();
+    return await runFrozenPlan(plan, resolution, server.baseUrl, variant === "unavailable" ? "受控演示应用已关闭" : "新启动的受控演示应用", await demoSnapshotHash(variant), profile);
+  } finally {
+    if (variant !== "unavailable") await server.close();
+  }
+}
+
 function printReport(report: RunReport): void {
   const symbol = { VERIFIED: "✅", FAILED: "❌", UNVERIFIABLE: "⚠" } as const;
   console.log(`VibeGuard M1｜运行 ${report.runId}`);
@@ -221,7 +249,7 @@ function printResolution(resolution: Resolution): void {
 
 function printPlannedReport(report: PlannedRunReport): void {
   const symbol = { VERIFIED: "✅", FAILED: "❌", UNVERIFIABLE: "⚠" } as const;
-  console.log(`VibeGuard M3 人工计划样例｜运行 ${report.runId}｜整个任务 ${symbol[report.verdict]} ${report.verdict}`);
+  console.log(`VibeGuard M3 ${report.source === "manual-fixture" ? "人工计划样例" : "模型计划受控演示"}｜运行 ${report.runId}｜整个任务 ${symbol[report.verdict]} ${report.verdict}`);
   for (const requirement of report.requirements) {
     console.log(`${symbol[requirement.verdict]} ${requirement.normalized}`);
     for (const ref of requirement.sourceRefs) console.log(`  用户原话 [${ref.messageId}:${ref.start}-${ref.end}]：${ref.quote}`);

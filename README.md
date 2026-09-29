@@ -1,6 +1,6 @@
 # VibeGuard 开发原型
 
-VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证据，分别报告已验证、验证失败、无法验证。当前已完成 **M1 受控样例证据闭环**；**M2 对话整理**和 **M3 需求驱动规划**已部分实现。DeepSeek Flash 已在单个公开样例上真实运行，但模型规划结果仍有测试数据与预期状态错误；尚未实现外部项目隔离、MCP 或宿主钩子。
+VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证据，分别报告已验证、验证失败、无法验证。当前已完成 **M1 受控样例证据闭环**；**M2 对话整理**和 **M3 需求驱动规划**已部分实现。DeepSeek Flash 已在单个公开样例上真实整理要求、生成计划，并让同一计划在正确/缺陷/不可用的受控应用上产生三态证据；尚未实现外部项目隔离、MCP 或宿主钩子。
 
 ## 当前可运行效果
 
@@ -68,9 +68,9 @@ Remove-Variable vgKey
 
 豆包、硅基流动、百炼目前**没有** VibeGuard 的同格式入口，不能仅设置密钥就使用 `--provider doubao/siliconflow/bailian`。它们各自还需要确认接口地址、模型 ID、账户地域或权限，并通过真实调用验证；接入后才会加入上面的默认列表。当前 `verify --variant ...` 是受控演示命令，**还不能**执行 `vibeguard verify task.json --provider deepseek` 这样的完整自动验收。M2/M3 的真实模型流程是 `resolve` → `plan`，模型计划执行与外部项目隔离仍在开发。
 
-## 冻结计划并执行（M3 人工样例）
+## 冻结计划并执行（M3 受控演示）
 
-M3 的程序规则要求每条当前有效要求都有检查目标，或明确说明暂时无法检查；已取消的要求不能重新变成必需项。计划包含 HTTP 操作和预期断言，程序固定计划摘要后才执行。当前演示计划仍由人手写，下面的命令用于验证执行和覆盖规则，**不证明模型已经会自动规划**。
+M3 的程序规则要求每条当前有效要求都有检查目标，或明确说明暂时无法检查；已取消的要求不能重新变成必需项。计划包含 HTTP 操作和预期断言，程序固定计划摘要后才执行。`demo-plan` 使用人工固定样例，用于验证执行与覆盖规则：
 
 ```powershell
 node dist/cli.js demo-plan --variant correct
@@ -81,11 +81,16 @@ node dist/cli.js planned-report <运行ID>
 
 正确版的 150/149 门槛检查通过，但“一次使用”仍未检查，因此整个任务输出 `UNVERIFIABLE`。缺陷版会在 149 元订单的保存记录中发现 20 元错误优惠，输出 `FAILED`。服务不可用时输出 `UNVERIFIABLE`。三次运行使用相同的计划摘要，目标代码摘要随变体变化；报告及逐步 HTTP 证据保存在 `.vibeguard/planned-runs/`，可在新进程读取并核对哈希。`demo-plan` 的退出码按整个任务结论给出：0 已验证、1 失败、2 无法验证、3 参数或内部错误；上面的旧 `verify` 命令仍按门槛检查范围给出退出码。
 
-`plan` 已提供模型规划入口：它读取一份**已完成要求整理**的记录与用户授权的 API 描述文件，让模型提出检查，再由程序拒绝漏项、越界接口和自行提交的结论。这个入口目前只冻结并保存**结构合格的候选计划**，尚不能从该命令直接执行模型计划。真实 DeepSeek Flash 计划已保存，但把结算成功状态误写为 200（演示 API 返回 201），且在不同检查间复用了同一张券，使门槛反例可能被“券已用过”混淆；因此不能把计划冻结当作验收通过。
+`plan` 让模型根据**已完成的要求整理**和授权 API 描述生成候选计划。程序拒绝漏项、越界接口、自行提交结论、错误的成功状态码及跨检查复用优惠券。计划摘要还绑定 API 描述摘要；旧描述对应的计划不能继续运行。冻结只说明候选计划通过这些检查，**不等于交付通过验收**。
 
 ```powershell
 node dist/cli.js plan --resolution <要求整理ID> --profile fixtures/profiles/coupon-api.json --provider deepseek
 node dist/cli.js plan-record <计划摘要> --format json
+node dist/cli.js run-demo-plan --plan <计划摘要> --variant correct
+node dist/cli.js run-demo-plan --plan <计划摘要> --variant faulty
+node dist/cli.js run-demo-plan --plan <计划摘要> --variant unavailable
 ```
+
+`run-demo-plan` 只接受内置优惠券对话和受控演示 API，不会启动任意外部 Agent 代码。一次真实 DeepSeek Flash 计划在正确版得到两条要求均 `VERIFIED`，缺陷版发现低于 150 元 1 分时仍优惠 20 元而判 `FAILED`，服务不可用版判 `UNVERIFIABLE`。同一计划摘要和原话引用贯穿三次运行；仍需用隐藏任务评估模型是否经常漏条件或生成错误预期。
 
 受控演示报告现在把用户原话、每条要求的结论和执行证据 ID 放在一起。本地文件哈希只能发现读取时的文件变化；若干活 Agent 与 VibeGuard 共享证据目录的写权限，不能据此宣称证据无法伪造。

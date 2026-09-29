@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { assertPlanRoutes, freezePlan, type PlanProposal } from "../planning.js";
+import { assertPlanMatchesProfile } from "../plan-profile.js";
+import type { ApiProfile } from "../pi-plan-gateway.js";
 import { sha256 } from "../storage.js";
 import { startDemoServer } from "../demo-app.js";
 import { readPlannedRun, runFrozenPlan, savePlannedRun } from "../plan-runner.js";
@@ -29,6 +31,16 @@ const baseResolution: Resolution = {
 };
 
 const demoRoutes = new Set(["POST /checkout", "GET /orders/{order-id}"]);
+const demoProfile: ApiProfile = {
+  schemaVersion: 1,
+  profileId: "test-demo-api",
+  description: "controlled fixture",
+  routes: [
+    { method: "POST", pathTemplate: "/checkout", description: "create order", successStatus: 201, responseExample: {} },
+    { method: "GET", pathTemplate: "/orders/{order-id}", description: "read order", successStatus: 200, responseExample: {} },
+  ],
+  isolationRules: [{ method: "POST", pathTemplate: "/checkout", bodyField: "couponCode" }],
+};
 
 function proposal(thresholdCents: number): PlanProposal {
   return {
@@ -117,7 +129,7 @@ test("runner revalidates a frozen plan before issuing any request", async () => 
   const tampered = structuredClone(plan);
   tampered.criteria[0]!.checks[0]!.steps[0]!.pathTemplate = "https://example.com/checkout";
   await assert.rejects(
-    runFrozenPlan(tampered, baseResolution, "http://127.0.0.1:1", "no server needed", sha256("fixture"), demoRoutes),
+    runFrozenPlan(tampered, baseResolution, "http://127.0.0.1:1", "no server needed", sha256("fixture"), demoProfile),
     /safe relative path/,
   );
 });
@@ -128,7 +140,7 @@ test("a plan cannot request a route outside the authorized API profile", async (
   const plan = freezePlan(baseResolution, unexpected, "model-proposal");
   assert.throws(() => assertPlanRoutes(plan, demoRoutes), /outside the authorized profile/);
   await assert.rejects(
-    runFrozenPlan(plan, baseResolution, "http://127.0.0.1:1", "no server needed", sha256("fixture"), demoRoutes),
+    runFrozenPlan(plan, baseResolution, "http://127.0.0.1:1", "no server needed", sha256("fixture"), demoProfile),
     /outside the authorized profile/,
   );
 });
@@ -141,6 +153,16 @@ test("authorized dynamic route accepts equivalent capture names with underscore 
   compatible.criteria[0]!.checks[1]!.steps[1]!.pathTemplate = "/orders/{orderId}";
   const plan = freezePlan(baseResolution, compatible, "model-proposal");
   assert.doesNotThrow(() => assertPlanRoutes(plan, demoRoutes));
+  assert.doesNotThrow(() => assertPlanMatchesProfile(plan, demoProfile));
+});
+
+test("API profile blocks incorrect success status and reused stateful test data", () => {
+  const wrongStatus = proposal(15000);
+  wrongStatus.criteria[0]!.checks[0]!.steps[0]!.expectedStatus = 200;
+  assert.throws(() => assertPlanMatchesProfile(freezePlan(baseResolution, wrongStatus, "model-proposal"), demoProfile), /success status 200 disagrees/);
+  const reusedCoupon = proposal(15000);
+  reusedCoupon.criteria[0]!.checks[1]!.steps[0]!.body = { amountCents: 14900, couponCode: "at-boundary" };
+  assert.throws(() => assertPlanMatchesProfile(freezePlan(baseResolution, reusedCoupon, "model-proposal"), demoProfile), /reuse couponCode/);
 });
 
 test("frozen checks execute real HTTP calls, inspect stored orders and persist evidence", async () => {
@@ -149,7 +171,7 @@ test("frozen checks execute real HTTP calls, inspect stored orders and persist e
     const plan = freezePlan(baseResolution, proposal(15000), "manual-fixture");
     const correctServer = await startDemoServer(false);
     let correct;
-    try { correct = await runFrozenPlan(plan, baseResolution, correctServer.baseUrl, "fresh controlled demo app", sha256("correct fixture app"), demoRoutes); }
+    try { correct = await runFrozenPlan(plan, baseResolution, correctServer.baseUrl, "fresh controlled demo app", sha256("correct fixture app"), demoProfile); }
     finally { await correctServer.close(); }
     assert.deepEqual(correct.report.criteria[0]?.checks.map(item => item.verdict), ["VERIFIED", "VERIFIED"]);
     assert.equal(correct.report.requirements.find(item => item.requirementId === "threshold")?.verdict, "VERIFIED");
@@ -160,7 +182,7 @@ test("frozen checks execute real HTTP calls, inspect stored orders and persist e
 
     const faultyServer = await startDemoServer(true);
     let faulty;
-    try { faulty = await runFrozenPlan(plan, baseResolution, faultyServer.baseUrl, "fresh controlled demo app", sha256("faulty fixture app"), demoRoutes); }
+    try { faulty = await runFrozenPlan(plan, baseResolution, faultyServer.baseUrl, "fresh controlled demo app", sha256("faulty fixture app"), demoProfile); }
     finally { await faultyServer.close(); }
     assert.equal(faulty.report.criteria[0]?.checks[1]?.verdict, "FAILED");
     assert.equal(faulty.report.verdict, "FAILED");
@@ -175,7 +197,7 @@ test("frozen checks execute real HTTP calls, inspect stored orders and persist e
 
     const unavailableServer = await startDemoServer(false);
     await unavailableServer.close();
-    const unavailable = await runFrozenPlan(plan, baseResolution, unavailableServer.baseUrl, "stopped controlled demo app", sha256("unavailable fixture app"), demoRoutes);
+    const unavailable = await runFrozenPlan(plan, baseResolution, unavailableServer.baseUrl, "stopped controlled demo app", sha256("unavailable fixture app"), demoProfile);
     assert.equal(unavailable.report.verdict, "UNVERIFIABLE");
   } finally {
     await rm(dataDir, { recursive: true, force: true });

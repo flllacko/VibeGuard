@@ -3,7 +3,9 @@ import { isDeepStrictEqual } from "node:util";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SourceRef, Verdict } from "./contracts.js";
-import { assertPlanRoutes, freezePlan, type FrozenPlan } from "./planning.js";
+import { freezePlan, type FrozenPlan } from "./planning.js";
+import { assertPlanMatchesProfile } from "./plan-profile.js";
+import type { ApiProfile } from "./pi-plan-gateway.js";
 import { currentRequirements, type Resolution } from "./requirements.js";
 import { sha256 } from "./storage.js";
 
@@ -34,11 +36,11 @@ export interface PlannedRunReport {
   limitations: string[];
 }
 
-export async function runFrozenPlan(plan: FrozenPlan, resolution: Resolution, baseUrl: string, environment: string, targetSnapshotHash: string, allowedRoutes: ReadonlySet<string>): Promise<{ report: PlannedRunReport; evidence: HttpStepEvidence[] }> {
+export async function runFrozenPlan(plan: FrozenPlan, resolution: Resolution, baseUrl: string, environment: string, targetSnapshotHash: string, profile: ApiProfile): Promise<{ report: PlannedRunReport; evidence: HttpStepEvidence[] }> {
   if (!resolution.resolutionComplete) throw new Error("Cannot execute plan with incomplete requirement resolution");
   if (!/^[0-9a-f]{64}$/.test(targetSnapshotHash)) throw new Error("Target snapshot hash is required");
   const validatedPlan = freezePlan(resolution, { criteria: plan.criteria, coverage: plan.coverage }, plan.source);
-  assertPlanRoutes(validatedPlan, allowedRoutes);
+  assertPlanMatchesProfile(validatedPlan, profile);
   const requirements = currentRequirements(resolution.revisions);
   if (plan.resolutionId !== resolution.resolutionId ||
     plan.conversationSha256 !== resolution.conversationSha256 ||
@@ -69,7 +71,7 @@ export async function runFrozenPlan(plan: FrozenPlan, resolution: Resolution, ba
     limitations: [
       "当前只执行受控的本地 HTTP 计划；没有浏览器、命令、数据库或外部项目隔离能力。",
       "计划中的自然语言前置条件尚未全部由机器独立核对，报告只支持执行过的断言。",
-      "当前目标摘要由调用方提供；人工样例只覆盖演示应用编译文件与变体配置，不是完整工作树快照。",
+      "当前目标摘要由调用方提供；受控演示仅覆盖演示应用编译文件与变体配置，不是完整工作树快照。",
       "本地证据哈希用于发现读取时的文件变化；与干活 Agent 共享写入权限时，不能防止其同时改写证据和清单。",
       plan.source === "manual-fixture" ? "本次计划为人工固定样本，不能证明模型能自行设计验收。" : "模型规划能力须通过隐藏样本和人工标准答案另行评估。",
     ],

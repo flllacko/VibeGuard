@@ -6,15 +6,20 @@
     {
       "method": "POST",
       "pathTemplate": "/checkout",
-      "description": "创建订单并尝试使用一张优惠券。",
-      "requestExample": { "amountCents": 15000, "couponCode": "UNUSED-COUPON" },
+      "description": "创建订单并尝试使用一张优惠券。请求体 amountCents 为整数分，couponCode 为非空字符串；每个独立检查使用不同 couponCode，同一检查内部可重复使用同一券。",
+      "successStatus": 201,
+      "requestExample": { "amountCents": 15000, "couponCode": "COUPON-EXAMPLE" },
       "responseExample": { "orderId": "1", "amountCents": 15000, "discountCents": 2000, "totalCents": 13000 }
     },
     {
       "method": "GET",
       "pathTemplate": "/orders/{order-id}",
       "description": "按上一请求得到的订单 ID 查询实际保存的订单。",
+      "successStatus": 200,
       "responseExample": { "amountCents": 15000, "discountCents": 2000, "totalCents": 13000 }
     }
+  ],
+  "isolationRules": [
+    { "method": "POST", "pathTemplate": "/checkout", "bodyField": "couponCode" }
   ]
 }

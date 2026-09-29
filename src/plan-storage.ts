@@ -5,7 +5,7 @@ import type { PlanGatewayOutput } from "./pi-plan-gateway.js";
 
 export interface PlanRecord {
   plan: FrozenPlan;
-  generation: { model: string; promptHash: string; usage: PlanGatewayOutput["usage"]; profileId: string };
+  generation: { model: string; promptHash: string; usage: PlanGatewayOutput["usage"]; profileId: string; profileSha256: string };
 }
 
 export async function savePlanRecord(dataDir: string, record: PlanRecord): Promise<string> {
@@ -17,7 +17,9 @@ export async function savePlanRecord(dataDir: string, record: PlanRecord): Promi
   } catch (error) {
     if (!isAlreadyExists(error)) throw error;
     const existing = JSON.parse(await readFile(path, "utf8")) as PlanRecord;
-    if (existing.plan.planHash !== record.plan.planHash) throw new Error("Existing plan hash mismatch");
+    if (existing.plan.planHash !== record.plan.planHash || existing.generation.profileSha256 !== record.generation.profileSha256) {
+      throw new Error("Existing plan was frozen against a different API profile");
+    }
   }
   return path;
 }
