@@ -20,6 +20,7 @@ import { captureTraeHook, exportTraeObservedConversation } from "./host-capture.
 import { registerTask } from "./task-registry.js";
 import { VerificationService } from "./verification-service.js";
 import { captureCodexTask } from "./codex-history.js";
+import { buildConnectionConfig } from "./connection-config.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -34,7 +35,25 @@ if (dataFlag >= 0) {
 }
 
 async function main(): Promise<void> {
+  if (command === "setup") {
+    const host = args[0];
+    if (host !== "codex" && host !== "claude-code") throw new Error("setup currently supports codex or claude-code");
+    const guide = buildConnectionConfig(host, { dataDir, codexBin: option(args, "--codex-bin") });
+    if (outputFormat(args) === "json") console.log(JSON.stringify(guide, null, 2));
+    else {
+      console.log("只展示配置，不修改平台设置。验收默认由用户主动调用。\n");
+      console.log("在平台的 MCP 添加界面填写：");
+      console.log(`名称：vibeguard\n类型：STDIO\n启动命令：${guide.mcp.form.command}\n参数（每行一项）：\n${guide.mcp.form.args.join("\n")}\n工作目录：${guide.mcp.form.workingDirectory}\n环境变量传递：DEEPSEEK_API_KEY\n`);
+      console.log("支持 JSON 配置的入口：\n" + JSON.stringify(guide.mcp.json, null, 2));
+      if (guide.mcp.toml) console.log("\n需要文件配置时的 TOML：\n" + guide.mcp.toml);
+      console.log(`\n对话采集 Hook：合并到 ${guide.collector.hookConfigTarget}，不要覆盖其他配置。\n${JSON.stringify(guide.collector.hooksJson, null, 2)}\n`);
+      console.log(guide.collector.approvalEffect);
+      console.log("保存、按平台要求信任并重载后，主动说“用 VibeGuard 验收”。工具连接与当前会话采集需要分别确认；详细步骤见 docs/09-user-mcp-setup.md。");
+    }
+    return;
+  }
   if (!command || command === "help") {
+    console.log("User setup (prints configuration only): vibeguard setup codex|claude-code [--format json] [--codex-bin PATH]");
     console.log("Usage: vibeguard providers\n       vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID [--model ID] [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard capture-trae-hook (reads one Hook JSON from stdin)\n       vibeguard export-trae-session SESSION_ID (prints observed JSON)\n       vibeguard plan --resolution ID --profile FILE --provider ID [--model ID]\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard run-demo-plan --plan PLAN_HASH --variant correct|faulty|unavailable [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
     console.log("Manual acceptance: vibeguard capture-codex THREAD_ID [--scope final|checkpoint] [--codex-bin PATH]\n                   vibeguard register-task --task FILE [--scope final|checkpoint] [--demo-plan HASH --demo-variant correct|faulty|unavailable]\n                   vibeguard verify-task TASK_REF [--force-rerun] [--provider ID] [--model ID]\n                   vibeguard verification RUN_ID\nMCP stdio server: node dist/mcp-entry.js [--data-dir PATH] [--provider ID] [--model ID] [--codex-thread ID --codex-bin PATH]");
     return;

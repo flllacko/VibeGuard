@@ -2,6 +2,8 @@
 
 更新：2026-09-30。已用当前安装的 Codex CLI 0.159.0 实测读取本条真实桌面会话；未修改 Codex 全局配置、安装 Hook 或改变权限模式。
 
+后续已增加动态会话采集 Hook：`node dist/cli.js setup codex` 展示 MCP 表单和 Hook 配置；当前会话编号来自平台事件，不写死在全局 MCP 中。下面记录保留首次固定会话试点，本次动态入口的本地链路检查与用户操作见 [接入说明](09-user-mcp-setup.md)。非受管 Hook 仍须用户审查并信任，尚未在本条原聊天中启用。
+
 ## 权限分别控制什么
 
 - Agent 的审批、沙箱和“完全访问”设置控制其工具执行范围，不能代替 MCP 接入或提供原始聊天。
@@ -41,7 +43,7 @@ node dist/cli.js capture-codex <会话编号>
 
 工具参数不接受其他 threadId、文件路径或 verdict，绑定只能由服务启动配置决定。省略 taskRef 会重新采集并登记快照；同一 taskRef 仍可复用验收记录。因任务范围未确认，本次材料检查返回 `UNVERIFIABLE`，不消耗模型调用。
 
-拟添加到用户 Codex 配置的 MCP 条目保存在本地 `.vibeguard/integration-proposals/codex-current-session.toml`。它尚未生效。添加前需说明并获得用户同意，备份原配置，只添加 VibeGuard 条目；工具审批设为 prompt，不修改现有沙箱、审批或 Hook 设置。之后重载宿主工具，确认原聊天真的能调用。
+早期拟添加的固定会话条目保存在本地 `.vibeguard/integration-proposals/codex-current-session.toml`，未生效。用户现已选择自行配置，无需由 Codex 备份或修改该文件。优先按新接入说明通过界面添加 MCP，再审查动态采集 Hook；不要把早期固定编号条目当成任意聊天都能通用的配置。
 
 ## 真实记录
 

@@ -2,13 +2,15 @@
 
 更新：2026-09-30。当前提供可运行源码和本地 stdio MCP 服务；未发布全局安装包或各宿主的一键配置助手。默认主动验收，自动模式尚未实现。
 
+已新增只展示配置的 `setup codex|claude-code` 以及同包提供的主动验收前采集 Hook；表单添加和采集配置见 [用户接入说明](09-user-mcp-setup.md)。Hook 读取宿主的当前会话身份、保存原文并把 taskRef 补入工具输入；MCP 仍保持三个工具与原参数。宿主 Hook 尚未安装，Claude 尚未应用内实测，不能将本地集成测试写成全平台接入完成。
+
 ## 当前实际能力
 
 同一个 VerificationService 供 CLI 和 MCP 调用。MCP 只有三个工具：
 
 | 工具 | 用户能获得什么 |
 | --- | --- |
-| `verify_task` | 为已登记 taskRef 创建运行；已绑定 Codex 会话时可省略 taskRef 自动采集。相同 taskRef 复用记录，`forceRerun` 明确创建新运行 |
+| `verify_task` | 为已登记 taskRef 创建运行；已启用会话采集 Hook 或绑定单条 Codex 会话时可省略 taskRef。相同 taskRef 复用记录，`forceRerun` 明确创建新运行 |
 | `get_verification` | 查询状态；完成后返回每项原话、结论、证据编号和限制 |
 | `read_evidence` | 读取属于该运行的原始证据片段；注明是否截断 |
 

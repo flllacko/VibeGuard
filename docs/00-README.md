@@ -6,6 +6,8 @@
 
 ## 1. 先读哪一份
 
+用户自己在平台配置 MCP 和对话采集，请先读 [用户接入说明](09-user-mcp-setup.md)，运行 `node dist/cli.js setup codex` 或 `setup claude-code` 生成本机字段；命令不修改宿主配置。
+
 | 文档 | 给谁看 | 回答什么 |
 | --- | --- | --- |
 | [产品需求](01-product-requirements.md) | 项目发起人、开发者 | 解决什么问题，用户如何使用，第一版交付什么 |

@@ -1,8 +1,10 @@
 # VibeGuard 安装与跨平台接入设计
 
-更新：2026-09-30。**以下主要是目标方案，不是已发布的安装说明。**当前仓库 `package.json` 仍为 `private`，已有 CLI 与本地 stdio MCP 原型，具体可执行步骤见 [主动验收与 MCP 使用说明](07-mcp-prototype.md)。Codex 已完成官方接口读取本条真实历史、CLI 登记和 MCP 客户端自动采集的[试点](08-codex-history-pilot.md)，尚未在原聊天工具目录中注册或自动绑定任意新会话。没有全局安装包、可安装的宿主 Hook 配置或“连接宿主”命令。另有一个仅处理 Trae Hook JSON 的本地收集原型，详见根目录 README；它尚未在 Trae 应用内触发。
+更新：2026-09-30。**以下主要是目标方案，不是已发布的安装说明。**当前仓库 `package.json` 仍为 `private`，已有 CLI 与本地 stdio MCP 原型，具体可执行步骤见 [主动验收与 MCP 使用说明](07-mcp-prototype.md)。Codex 已完成官方接口读取真实历史的[试点](08-codex-history-pilot.md)，尚未在原聊天工具目录中注册。现在有生成 MCP 字段及 Codex/Claude 采集 Hook 配置的 `setup` 命令，但没有全局安装包或自动修改宿主的“连接”命令。另有一个仅处理 Trae Hook JSON 的本地收集原型，尚未在 Trae 应用内触发。
 
 ## 用户实际要做的两件事
+
+最新源码已提供 `setup codex|claude-code`，只输出本机 MCP 表单字段、JSON/TOML 备选片段和采集 Hook 配置，不修改宿主。采集器与 MCP 同包，不另开网站；平台读取实现仍不同。当前用户需要分别添加 MCP 与 Hook，后续可由平台插件包装。Codex 界面也有“添加 MCP”表单，TOML 仅是底层存储格式。现有程序及实测范围详见 [用户接入说明](09-user-mcp-setup.md)，其余本节仍是目标设计。
 
 **安装 VibeGuard**：把独立验收程序放到用户机器或受控服务中，负责整理要求、运行检查和保存证据。第一版计划用跨 Windows/macOS/Linux 的 Node.js 包分发 Core、CLI 与 MCP 服务；未来可另外包装成独立安装器。包名和命令尚未发布。
 

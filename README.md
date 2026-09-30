@@ -4,6 +4,21 @@ VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证
 
 默认由用户说“用 VibeGuard 验收”后发起检查；自动验收作为后续可开启的模式，默认关闭。MCP 是 Agent 调用 VibeGuard 的工具入口，不会自动提供完整聊天记录，也不保证存在 `@VibeGuard` 入口。
 
+## 用户自己接入：先生成填写说明
+
+Codex 的设置界面可以直接添加 MCP，**不要求手改 TOML**。当前采集器随同一个 VibeGuard 源码包提供；配置 MCP 和采集 Hook 后，Hook 会从宿主取得当前会话身份，在主动验收前独立读取原文、登记任务。用户不用每换聊天都填写编号。MCP 与 Hook 各配置一次，不能声称只加 MCP 就自然获得聊天历史。
+
+```powershell
+pnpm build
+node dist/cli.js setup codex
+# Claude Code 的配置说明
+node dist/cli.js setup claude-code
+```
+
+`setup` **只显示适合本机的表单字段和配置片段，不修改平台配置**，不打印密钥。Codex 的非受管 Hook 还须用户在平台中审查并信任；其输入改写会允许该次验收工具调用。Claude 入口使用官方 SDK 本地读取，不调用 Anthropic API。完整操作与限制见 [用户接入说明](docs/09-user-mcp-setup.md)。
+
+本次 Codex 检查使用手工构造的 Hook 输入，实际读取本条会话的 42 条用户消息和 146 条助手消息，再进入实际 MCP 服务；尚未启用原聊天的宿主自动 Hook。Claude 通过 SDK 合成转录与 MCP 集成测试，尚未在 Claude 应用内实测。任务范围未确认、外部执行尚未接入，因此不能据此宣称真实业务任务已验收完成。
+
 ## 主动验收与 MCP（M5 原型）
 
 CLI 与 MCP 共用同一个验收服务。先构建，再登记原始对话：
@@ -17,7 +32,7 @@ node dist/cli.js verification <运行输出的runId>
 
 `verify-task` 自动读取环境变量，默认 DeepSeek Flash。**普通外部任务目前只整理要求，仍报告无法验证**；只有绑定冻结计划的内置受控样例能实际执行。MCP 提供 `verify_task`、`get_verification`、`read_evidence` 三个工具，启动文件为 `dist/mcp-entry.js`；支持本地 MCP 的宿主填写启动命令即可连接。
 
-Codex 现在已有真实会话采集试点：`node dist/cli.js capture-codex <会话编号>` 自动通过官方接口读取历史并登记材料；MCP 服务以 `--codex-thread <编号>` 绑定本条会话后，`verify_task` 可以省略 taskRef 自动采集。实测取得 39 条用户原话和 137 条助手消息。当前仍需确认具体任务范围，材料标 `partial`；尚未注册到真实宿主的工具目录或实现任意新会话自动绑定。详见 [Codex 真实会话读取试点](docs/08-codex-history-pilot.md)。其他宿主仍需导入或分别开发采集器。
+Codex 的早期固定会话试点仍保留：`node dist/cli.js capture-codex <会话编号>`，或 MCP 启动参数 `--codex-thread <编号>`。新接入优先使用上面的采集 Hook，由平台提供当前会话身份，不把一个全局固定编号误用于所有聊天。详见 [Codex 真实会话读取试点](docs/08-codex-history-pilot.md)。
 
 具体启动配置、长任务阶段范围的当前限制和已实测证据见 [主动验收与 MCP 使用说明](docs/07-mcp-prototype.md)。目前需要下载源码构建，尚未发布全局安装包，也未修改任何宿主的全局配置。
 

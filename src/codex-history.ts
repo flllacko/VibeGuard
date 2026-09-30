@@ -1,12 +1,8 @@
-import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 import { ConversationSchema, type Conversation } from "./intake.js";
-import { registerTask } from "./task-registry.js";
-import { sha256 } from "./storage.js";
+import { saveHostSnapshot } from "./host-snapshot.js";
 
 const ThreadIdSchema = z.string().uuid();
 const ItemSchema = z.object({ id: z.string().min(1), type: z.string().min(1) }).passthrough();
@@ -169,16 +165,6 @@ export async function captureCodexTask(dataDir: string, threadId: string, scope:
   try {
     await client.initialize();
     const capture = await readCodexHistory(client, threadId);
-    const captureId = randomUUID();
-    const directory = join(dataDir, "host-snapshots", "codex", captureId);
-    await mkdir(directory, { recursive: true });
-    const raw = JSON.stringify(capture.raw);
-    const conversation = JSON.stringify(capture.conversation, null, 2) + "\n";
-    const receipt = { schemaVersion: 1, captureId, capturedAt: new Date().toISOString(), ...capture.receipt, rawSha256: sha256(raw), conversationSha256: sha256(conversation) };
-    await writeFile(join(directory, "raw.json"), raw, { flag: "wx" });
-    await writeFile(join(directory, "conversation.json"), conversation, { flag: "wx" });
-    await writeFile(join(directory, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n", { flag: "wx" });
-    const task = await registerTask(dataDir, join(directory, "conversation.json"), scope);
-    return { ...receipt, taskRef: task.taskRef, scope, storedAt: directory };
+    return await saveHostSnapshot(dataDir, "codex", capture, scope);
   } finally { await client.close(); }
 }
