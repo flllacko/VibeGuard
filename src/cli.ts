@@ -17,6 +17,8 @@ import type { ApiProfile } from "./pi-plan-gateway.js";
 import { readPlanRecord, savePlanRecord } from "./plan-storage.js";
 import { curatedProviders, selectModel } from "./model-selection.js";
 import { captureTraeHook, exportTraeObservedConversation } from "./host-capture.js";
+import { registerTask } from "./task-registry.js";
+import { VerificationService } from "./verification-service.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -33,6 +35,30 @@ if (dataFlag >= 0) {
 async function main(): Promise<void> {
   if (!command || command === "help") {
     console.log("Usage: vibeguard providers\n       vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID [--model ID] [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard capture-trae-hook (reads one Hook JSON from stdin)\n       vibeguard export-trae-session SESSION_ID (prints observed JSON)\n       vibeguard plan --resolution ID --profile FILE --provider ID [--model ID]\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard run-demo-plan --plan PLAN_HASH --variant correct|faulty|unavailable [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
+    console.log("Manual acceptance: vibeguard register-task --task FILE [--scope final|checkpoint] [--demo-plan HASH --demo-variant correct|faulty|unavailable]\n                   vibeguard verify-task TASK_REF [--force-rerun] [--provider ID] [--model ID]\n                   vibeguard verification RUN_ID\nMCP stdio server: node dist/mcp-entry.js [--data-dir PATH] [--provider ID] [--model ID]");
+    return;
+  }
+  if (command === "register-task") {
+    const taskPath = option(args, "--task");
+    if (!taskPath) throw new Error("register-task requires --task FILE");
+    const scope = option(args, "--scope") ?? "final";
+    if (scope !== "final" && scope !== "checkpoint") throw new Error("Invalid --scope");
+    const planHash = option(args, "--demo-plan");
+    const variant = option(args, "--demo-variant");
+    if (Boolean(planHash) !== Boolean(variant)) throw new Error("--demo-plan and --demo-variant must be supplied together");
+    if (variant !== undefined && variant !== "correct" && variant !== "faulty" && variant !== "unavailable") throw new Error("Invalid --demo-variant");
+    const task = await registerTask(dataDir, taskPath, scope, planHash && variant ? { planHash, variant } : undefined);
+    console.log(JSON.stringify(task, null, 2));
+    return;
+  }
+  if (command === "verify-task" || command === "verification") {
+    if (!args[0]) throw new Error(`Missing ${command === "verify-task" ? "TASK_REF" : "RUN_ID"}`);
+    const model = selectModel(option(args, "--provider") ?? "deepseek", option(args, "--model"));
+    const service = new VerificationService(dataDir, new PiRequirementGateway(model.piProvider, model.modelId), `${model.piProvider}/${model.modelId}`);
+    const result = command === "verify-task" ? await service.request(args[0], args.includes("--force-rerun")) : await service.get(args[0]);
+    const final = command === "verify-task" ? await service.wait(result.runId as string) : result;
+    console.log(JSON.stringify(final, null, 2));
+    if (command === "verify-task") process.exitCode = exitCode(final.verdict as Verdict ?? "UNVERIFIABLE");
     return;
   }
   if (command === "providers") {

@@ -1,6 +1,23 @@
 # VibeGuard 开发原型
 
-VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证据，分别报告已验证、验证失败、无法验证。当前已完成 **M1 受控样例证据闭环**；**M2 对话整理**和 **M3 需求驱动规划**已部分实现。DeepSeek Flash 已在公开样例及两份新合成对话中整理要求；新优惠券计划在正确、两种缺陷、不可用实现上产生预期证据，详见 [保留样本开发评估](docs/heldout-evaluation-2026-09-29.md)。尚未实现外部项目隔离、MCP 或宿主钩子。
+VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证据，分别报告已验证、验证失败、无法验证。当前已完成 **M1 受控样例证据闭环**；**M2 对话整理**和 **M3 需求驱动规划**已部分实现，新增 **M5 主动验收与 MCP 原型**。DeepSeek Flash 已在公开样例及两份新合成对话中整理要求；新优惠券计划在正确、两种缺陷、不可用实现上产生预期证据，详见 [保留样本开发评估](docs/heldout-evaluation-2026-09-29.md)。尚未实现外部项目隔离、真实宿主完整接入或自动验收。
+
+默认由用户说“用 VibeGuard 验收”后发起检查；自动验收作为后续可开启的模式，默认关闭。MCP 是 Agent 调用 VibeGuard 的工具入口，不会自动提供完整聊天记录，也不保证存在 `@VibeGuard` 入口。
+
+## 主动验收与 MCP（M5 原型）
+
+CLI 与 MCP 共用同一个验收服务。先构建，再登记原始对话：
+
+```powershell
+pnpm build
+node dist/cli.js register-task --task fixtures/conversations/coupon-complete.json
+node dist/cli.js verify-task <登记输出的taskRef>
+node dist/cli.js verification <运行输出的runId>
+```
+
+`verify-task` 自动读取环境变量，默认 DeepSeek Flash。**普通外部任务目前只整理要求，仍报告无法验证**；只有绑定冻结计划的内置受控样例能实际执行。MCP 提供 `verify_task`、`get_verification`、`read_evidence` 三个工具，启动文件为 `dist/mcp-entry.js`；支持本地 MCP 的宿主填写启动命令即可连接，完整对话仍需导入或由适配器采集。
+
+具体启动配置、长任务阶段范围的当前限制和已实测证据见 [主动验收与 MCP 使用说明](docs/07-mcp-prototype.md)。目前需要下载源码构建，尚未发布全局安装包，也未修改任何宿主的全局配置。
 
 ## 当前可运行效果
 
