@@ -34,7 +34,21 @@ node dist/cli.js resolution <要求整理ID> --format json
 
 `resolve` 调用 Pi 的模型 API，让模型提出要求新增、修改、取消事件；程序核对每条用户消息的去向及每段原话是否逐字存在。若缺模型凭据、模型输出错误或材料不完整，保存缺口并退出为“无法完成整理”。DeepSeek Flash 已在内置优惠券对话上真实整理出门槛、单次使用和已取消的过期限制；**一个样例不证明一般场景的理解质量**。消息都有处理记录也不能证明模型绝不会漏掉语义上的要求，正式报告仍要展示清单供人复核。
 
+材料或整理仍有缺口时，终端会先显示原因，再把条目标为“已见材料的候选要求”，不会把它们直接称作最终当前要求。阶段指令的两份合成对照样例在 `fixtures/conversations/phase-start-after-docs.json` 与 `phase-discussion-continues.json`：真实 DeepSeek Flash 调用分别撤销了“先不写代码”和保留了该限制。它们不是宿主长对话准确性的证明。
+
 Pi 依赖采用 `@earendil-works/pi-ai` 0.87.1。pnpm 的两个非必需传递依赖构建脚本已明确禁用；DeepSeek Flash 的真实调用已通过，Kimi 尚未做账户实测。
+
+### Trae Hook 事件收集原型
+
+目前仅能**手工向 CLI 输入 Trae Hook 形状的 JSON**，并把观察到的用户输入和最后一条助手回复导出为候选对话。VibeGuard 还没有替你安装 Trae Hook，也不会自动验收 Trae 项目。下面的 PowerShell 命令只演示字段流转：
+
+```powershell
+'{"session_id":"demo-1","hook_event_name":"UserPromptSubmit","prompt":"增加登录功能"}' | node dist/cli.js capture-trae-hook
+'{"session_id":"demo-1","hook_event_name":"Stop","last_assistant_message":"已完成"}' | node dist/cli.js capture-trae-hook
+node dist/cli.js export-trae-session demo-1
+```
+
+收集命令成功时不向 stdout 写内容，避免把日志当成给干活 Agent 的新指令。每个事件单独保存在 `.vibeguard/host-events/`，会话 ID 用哈希作为目录名；导出结果始终标 `partial`。[Trae 官方 Hook 字段说明](https://docs.trae.cn/ide_hook-configuration-reference)分别给出当前 `prompt` 和 `last_assistant_message`，它们本身不能证明之前所有轮次、助手中间输出和任务边界都已收齐。这个候选对话可以检查采集格式，但**不能直接冻结完整任务的验收计划**。不要把真实 API Key、账号密码或其他秘密放进模拟 Hook 输入。
 
 ### 模型 API Key 与默认模型
 

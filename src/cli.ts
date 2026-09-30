@@ -16,6 +16,7 @@ import { assertPlanMatchesProfile, profileHash } from "./plan-profile.js";
 import type { ApiProfile } from "./pi-plan-gateway.js";
 import { readPlanRecord, savePlanRecord } from "./plan-storage.js";
 import { curatedProviders, selectModel } from "./model-selection.js";
+import { captureTraeHook, exportTraeObservedConversation } from "./host-capture.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -31,7 +32,7 @@ if (dataFlag >= 0) {
 
 async function main(): Promise<void> {
   if (!command || command === "help") {
-    console.log("Usage: vibeguard providers\n       vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID [--model ID] [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard plan --resolution ID --profile FILE --provider ID [--model ID]\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard run-demo-plan --plan PLAN_HASH --variant correct|faulty|unavailable [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
+    console.log("Usage: vibeguard providers\n       vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID [--model ID] [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard capture-trae-hook (reads one Hook JSON from stdin)\n       vibeguard export-trae-session SESSION_ID (prints observed JSON)\n       vibeguard plan --resolution ID --profile FILE --provider ID [--model ID]\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard run-demo-plan --plan PLAN_HASH --variant correct|faulty|unavailable [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
     return;
   }
   if (command === "providers") {
@@ -39,6 +40,15 @@ async function main(): Promise<void> {
       console.log(`${provider.id}｜默认 ${provider.defaultModel}｜${provider.envVar} ${process.env[provider.envVar] ? "已设置" : "未设置"}｜${provider.description}`);
     }
     console.log("仅显示是否设置，不读取或打印密钥值；模型 API 是否可用仍需实际调用确认。");
+    return;
+  }
+  if (command === "capture-trae-hook") {
+    await captureTraeHook(await readStdin(1024 * 1024), dataDir);
+    return;
+  }
+  if (command === "export-trae-session") {
+    if (!args[0]) throw new Error("Missing SESSION_ID");
+    console.log(JSON.stringify(await exportTraeObservedConversation(dataDir, args[0]), null, 2));
     return;
   }
   if (command === "intake" || command === "resolve") {
@@ -194,6 +204,18 @@ function option(args: string[], name: string): string | undefined {
   return index < 0 ? undefined : args[index + 1];
 }
 
+async function readStdin(maxBytes: number): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of process.stdin) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.byteLength;
+    if (size > maxBytes) throw new Error("Hook payload exceeds 1 MiB limit");
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 function outputFormat(args: string[]): "text" | "json" {
   const format = option(args, "--format") ?? "text";
   if (format !== "text" && format !== "json") throw new Error("Invalid --format");
@@ -233,16 +255,16 @@ function printReport(report: RunReport): void {
 }
 
 function printResolution(resolution: Resolution): void {
-  console.log(`VibeGuard M2｜要求整理 ${resolution.resolutionId}｜${resolution.resolutionComplete ? "消息均已处理（仍需审查语义）" : "⚠ 尚有缺口"}`);
+  console.log(`VibeGuard M2｜要求整理 ${resolution.resolutionId}｜${resolution.resolutionComplete ? "消息均已处理（仍需审查语义）" : "⚠ 尚有缺口，以下清单不是最终当前要求"}`);
+  for (const issue of resolution.coverageIssues) console.log(`⚠ ${issue}`);
   for (const requirement of currentRequirements(resolution.revisions)) {
-    console.log(`当前要求 ${requirement.requirementId} v${requirement.revision}：${requirement.normalized}`);
+    console.log(`${resolution.resolutionComplete ? "当前要求" : "已见材料的候选要求"} ${requirement.requirementId} v${requirement.revision}：${requirement.normalized}`);
     for (const ref of requirement.sourceRefs) console.log(`  用户原话 [${ref.messageId}:${ref.start}-${ref.end}]：${ref.quote}`);
   }
   for (const revision of resolution.revisions.filter(item => item.status === "cancelled")) {
     console.log(`本次取消 ${revision.requirementId}：${revision.normalized}`);
     for (const ref of revision.sourceRefs) console.log(`  用户原话 [${ref.messageId}:${ref.start}-${ref.end}]：${ref.quote}`);
   }
-  for (const issue of resolution.coverageIssues) console.log(`⚠ ${issue}`);
   for (const chunk of resolution.processing) console.log(`处理块 ${chunk.chunk}：${chunk.status}${chunk.model ? `，模型 ${chunk.model}` : ""}${chunk.error ? `，${chunk.error}` : ""}`);
   console.log(`原文 SHA-256：${resolution.conversationSha256}`);
 }

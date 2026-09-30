@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "taskId": "phase-start-after-docs",
+  "sessionId": "fixture-phase-start-after-docs",
+  "host": "synthetic-fixture",
+  "taskBoundary": { "startMessageId": "u1", "endMessageId": "u3" },
+  "transcriptCoverage": {
+    "level": "complete",
+    "source": "user_export",
+    "basis": "人工编写的完整短对话，仅用于复测带上下文的阶段改口，不代表真实宿主全量记录。",
+    "missingMessageIds": []
+  },
+  "messages": [
+    { "id": "u1", "sequence": 1, "role": "user", "text": "现在先不要直接开始大量写代码。先一起把第一版想清楚。" },
+    { "id": "a1", "sequence": 2, "role": "assistant", "text": "我们先讨论范围和方案，暂不动代码。" },
+    { "id": "u2", "sequence": 3, "role": "user", "text": "好就这个方案，帮我输出一份接下来 Codex 手把手对着干活的实施文档和需求文档。" },
+    { "id": "a2", "sequence": 4, "role": "assistant", "text": "实施文档和需求文档已经完成。下一步按文档开始开发代码。" },
+    { "id": "u3", "sequence": 5, "role": "user", "text": "开始吧。" }
+  ]
+}
