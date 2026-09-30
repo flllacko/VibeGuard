@@ -155,13 +155,15 @@ MCP 第一版只提供三个工具，减少描述与调用开销：
 
 | 工具 | 入参 | 返回 |
 | --- | --- | --- |
-| verify_task | 已登记的 taskRef、可选 forceRerun；项目、配置与范围从登记记录读取 | runId、状态、输入资料缺口 |
+| verify_task | 已登记 taskRef、可选 forceRerun；服务绑定 Codex 会话时可省略 taskRef，由采集器登记 scope 对应的新快照 | runId、状态、输入资料缺口；自动采集时附收据 |
 | get_verification | runId、可选 includeReport | 状态、逐项摘要、报告引用 |
 | read_evidence | runId、evidenceId、有限 offset/limit | 仅该运行的证据片段及摘要，注明截断 |
 
 完整材料由宿主适配器或 CLI 登记。MCP 本身不会自动取得历史消息；不能要求干活模型重新编写一份“完整对话”充当原始来源。工具不得提供 set_verdict、mark_pass 等捷径。
 
 2026-09-30 的原型已实现三个 stdio 工具及共用 VerificationService。普通登记任务调用 Pi 整理要求后明确报告尚无执行证据；缺材料时不调用模型。受控样例可绑定已冻结计划并实际执行，不能指定任意外部目标。记录为 running、completed；其他进程观察未完成记录时返回 indeterminate，不冒充完成或自动恢复。安装与命令见 [MCP 原型使用说明](07-mcp-prototype.md)。
+
+Codex 读取试点使用独立进程调用官方只读历史接口，逐页请求 full 内容，核对已知用户消息并保存原始响应。会话身份由服务启动配置绑定，不接受模型传入任意 threadId。读取历史与确认业务任务范围分别记录；当前任务范围待确认，材料仍为 partial。原始工具记录不能冒充独立验收新取得的证据。实测与权限范围见 [Codex 真实会话读取试点](08-codex-history-pilot.md)。
 
 长任务可返回 runId 后查询，但不能假装协议自动推送结果。报告投递通过宿主实际能力实现，轮询设上限。
 

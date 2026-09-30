@@ -15,7 +15,9 @@ node dist/cli.js verify-task <登记输出的taskRef>
 node dist/cli.js verification <运行输出的runId>
 ```
 
-`verify-task` 自动读取环境变量，默认 DeepSeek Flash。**普通外部任务目前只整理要求，仍报告无法验证**；只有绑定冻结计划的内置受控样例能实际执行。MCP 提供 `verify_task`、`get_verification`、`read_evidence` 三个工具，启动文件为 `dist/mcp-entry.js`；支持本地 MCP 的宿主填写启动命令即可连接，完整对话仍需导入或由适配器采集。
+`verify-task` 自动读取环境变量，默认 DeepSeek Flash。**普通外部任务目前只整理要求，仍报告无法验证**；只有绑定冻结计划的内置受控样例能实际执行。MCP 提供 `verify_task`、`get_verification`、`read_evidence` 三个工具，启动文件为 `dist/mcp-entry.js`；支持本地 MCP 的宿主填写启动命令即可连接。
+
+Codex 现在已有真实会话采集试点：`node dist/cli.js capture-codex <会话编号>` 自动通过官方接口读取历史并登记材料；MCP 服务以 `--codex-thread <编号>` 绑定本条会话后，`verify_task` 可以省略 taskRef 自动采集。实测取得 39 条用户原话和 137 条助手消息。当前仍需确认具体任务范围，材料标 `partial`；尚未注册到真实宿主的工具目录或实现任意新会话自动绑定。详见 [Codex 真实会话读取试点](docs/08-codex-history-pilot.md)。其他宿主仍需导入或分别开发采集器。
 
 具体启动配置、长任务阶段范围的当前限制和已实测证据见 [主动验收与 MCP 使用说明](docs/07-mcp-prototype.md)。目前需要下载源码构建，尚未发布全局安装包，也未修改任何宿主的全局配置。
 

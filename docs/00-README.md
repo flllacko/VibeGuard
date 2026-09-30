@@ -16,6 +16,7 @@
 | [伙伴简明介绍](05-partner-brief.md) | 合作伙伴 | 用通俗语言快速理解产品、效果和分工 |
 | [安装与跨平台接入设计](06-installation-and-integration.md) | 用户、接入开发者 | 安装和接入的区别；Codex、Claude Code、Cursor、Qoder、WorkBuddy、豆包、ZCode、TraeCode 及其他平台候选的接入边界 |
 | [主动验收与 MCP 使用说明](07-mcp-prototype.md) | 原型体验者、接入开发者 | 当前可执行命令、MCP 启动配置、三项工具及实际验证范围 |
+| [Codex 真实会话读取试点](08-codex-history-pilot.md) | 原型体验者、接入开发者 | 自动读取当前真实历史、权限区别、MCP 会话绑定与本次实测证据 |
 
 客户先读产品需求与伙伴介绍。开始编码时，Codex 按本入口、产品需求、技术设计、实施计划、验收标准的顺序读取。
 

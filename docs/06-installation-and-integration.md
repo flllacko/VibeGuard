@@ -1,6 +1,6 @@
 # VibeGuard 安装与跨平台接入设计
 
-更新：2026-09-30。**以下主要是目标方案，不是已发布的安装说明。**当前仓库 `package.json` 仍为 `private`，已有 CLI 与本地 stdio MCP 原型，具体可执行步骤见 [主动验收与 MCP 使用说明](07-mcp-prototype.md)。没有全局安装包、可安装的宿主 Hook 配置或“连接宿主”命令，也未完成真实 Agent 平台接入实测。另有一个仅处理 Trae Hook JSON 的本地收集原型，详见根目录 README；它尚未在 Trae 应用内触发。
+更新：2026-09-30。**以下主要是目标方案，不是已发布的安装说明。**当前仓库 `package.json` 仍为 `private`，已有 CLI 与本地 stdio MCP 原型，具体可执行步骤见 [主动验收与 MCP 使用说明](07-mcp-prototype.md)。Codex 已完成官方接口读取本条真实历史、CLI 登记和 MCP 客户端自动采集的[试点](08-codex-history-pilot.md)，尚未在原聊天工具目录中注册或自动绑定任意新会话。没有全局安装包、可安装的宿主 Hook 配置或“连接宿主”命令。另有一个仅处理 Trae Hook JSON 的本地收集原型，详见根目录 README；它尚未在 Trae 应用内触发。
 
 ## 用户实际要做的两件事
 

@@ -19,6 +19,7 @@ import { curatedProviders, selectModel } from "./model-selection.js";
 import { captureTraeHook, exportTraeObservedConversation } from "./host-capture.js";
 import { registerTask } from "./task-registry.js";
 import { VerificationService } from "./verification-service.js";
+import { captureCodexTask } from "./codex-history.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -35,7 +36,14 @@ if (dataFlag >= 0) {
 async function main(): Promise<void> {
   if (!command || command === "help") {
     console.log("Usage: vibeguard providers\n       vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID [--model ID] [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard capture-trae-hook (reads one Hook JSON from stdin)\n       vibeguard export-trae-session SESSION_ID (prints observed JSON)\n       vibeguard plan --resolution ID --profile FILE --provider ID [--model ID]\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard run-demo-plan --plan PLAN_HASH --variant correct|faulty|unavailable [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
-    console.log("Manual acceptance: vibeguard register-task --task FILE [--scope final|checkpoint] [--demo-plan HASH --demo-variant correct|faulty|unavailable]\n                   vibeguard verify-task TASK_REF [--force-rerun] [--provider ID] [--model ID]\n                   vibeguard verification RUN_ID\nMCP stdio server: node dist/mcp-entry.js [--data-dir PATH] [--provider ID] [--model ID]");
+    console.log("Manual acceptance: vibeguard capture-codex THREAD_ID [--scope final|checkpoint] [--codex-bin PATH]\n                   vibeguard register-task --task FILE [--scope final|checkpoint] [--demo-plan HASH --demo-variant correct|faulty|unavailable]\n                   vibeguard verify-task TASK_REF [--force-rerun] [--provider ID] [--model ID]\n                   vibeguard verification RUN_ID\nMCP stdio server: node dist/mcp-entry.js [--data-dir PATH] [--provider ID] [--model ID] [--codex-thread ID --codex-bin PATH]");
+    return;
+  }
+  if (command === "capture-codex") {
+    if (!args[0]) throw new Error("capture-codex requires THREAD_ID");
+    const scope = option(args, "--scope") ?? "checkpoint";
+    if (scope !== "final" && scope !== "checkpoint") throw new Error("Invalid --scope");
+    console.log(JSON.stringify(await captureCodexTask(dataDir, args[0], scope, option(args, "--codex-bin")), null, 2));
     return;
   }
   if (command === "register-task") {

@@ -152,7 +152,7 @@ export class VerificationService {
       if (intake.rawSha256 !== task.conversationSha256) throw new Error("Registered conversation content hash mismatch");
       if (intake.coverageIssues.length) {
         record.gapStage = "material";
-        record.issues = intake.coverageIssues;
+        record.issues = [...intake.coverageIssues, intake.conversation.transcriptCoverage.basis];
       } else if (task.execution.kind === "requirements_only") {
         failureStage = "requirements";
         const resolution = await resolveRequirements(intake, this.gateway);

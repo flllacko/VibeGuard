@@ -61,6 +61,8 @@ test("MCP stdio exposes only three tools, rejects verdict/path inputs and keeps 
     const task = await registerTask(dataDir, source, "checkpoint");
     client = await connect(dataDir);
     assert.deepEqual((await client.listTools()).tools.map(item => item.name).sort(), ["get_verification", "read_evidence", "verify_task"]);
+    await mustReject(() => client!.callTool({ name: "verify_task", arguments: {} }));
+    await mustReject(() => client!.callTool({ name: "verify_task", arguments: { threadId: "another-thread" } }));
     await mustReject(() => client!.callTool({ name: "verify_task", arguments: { taskRef: task.taskRef, verdict: "VERIFIED" } }));
     await mustReject(() => client!.callTool({ name: "verify_task", arguments: { taskRef: "../../secrets" } }));
     const request = payload(await client.callTool({ name: "verify_task", arguments: { taskRef: task.taskRef } }));
