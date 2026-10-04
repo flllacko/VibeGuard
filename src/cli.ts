@@ -308,7 +308,7 @@ function printReport(report: RunReport): void {
 }
 
 function printResolution(resolution: Resolution): void {
-  console.log(`VibeGuard M2｜要求整理 ${resolution.resolutionId}｜${resolution.resolutionComplete ? "消息均已处理（仍需审查语义）" : "⚠ 尚有缺口，以下清单不是最终当前要求"}`);
+  console.log(`VibeGuard M2｜要求整理 ${resolution.resolutionId}｜${resolution.resolutionComplete ? "材料和整理结构检查通过（仍需审查语义）" : "⚠ 尚有缺口，以下清单不是最终当前要求"}`);
   for (const issue of resolution.coverageIssues) console.log(`⚠ ${issue}`);
   for (const requirement of currentRequirements(resolution.revisions)) {
     console.log(`${resolution.resolutionComplete ? "当前要求" : "已见材料的候选要求"} ${requirement.requirementId} v${requirement.revision}：${requirement.normalized}`);
@@ -319,6 +319,11 @@ function printResolution(resolution: Resolution): void {
     for (const ref of revision.sourceRefs) console.log(`  用户原话 [${ref.messageId}:${ref.start}-${ref.end}]：${ref.quote}`);
   }
   for (const chunk of resolution.processing) console.log(`处理块 ${chunk.chunk}：${chunk.status}${chunk.model ? `，模型 ${chunk.model}` : ""}${chunk.error ? `，${chunk.error}` : ""}`);
+  if (resolution.interpretedUnits) {
+    const labels = { requirement: "要求", authorization: "操作授权", context: "背景或讨论", unresolved: "待确认" };
+    console.log("原话拆解（分段去向已核对，不等于语义或执行通过）：");
+    for (const unit of resolution.interpretedUnits) console.log(`  [${labels[unit.kind]}] ${unit.quote} → ${unit.requirementIds.join(", ") || unit.reason}`);
+  }
   console.log(`原文 SHA-256：${resolution.conversationSha256}`);
 }
 

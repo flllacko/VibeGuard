@@ -3,7 +3,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SourceRef, Verdict } from "./contracts.js";
 import { readConversation } from "./intake.js";
-import { currentRequirements, resolveRequirements, type RequirementGateway } from "./requirements.js";
+import { currentRequirements, resolveRequirements, REQUIREMENT_POLICY_VERSION, type RequirementGateway } from "./requirements.js";
+import type { InterpretedUnit } from "./intent-units.js";
 import { readResolution, saveResolution } from "./resolution-storage.js";
 import { readPlanRecord } from "./plan-storage.js";
 import { readApiProfile } from "./pi-plan-gateway.js";
@@ -30,6 +31,7 @@ export interface VerificationRecord {
   issues: string[];
   resolutionId?: string;
   reportRunId?: string;
+  interpretedUnits?: InterpretedUnit[];
   requirements: { requirementId: string; normalized: string; sourceRefs: SourceRef[]; verdict: Verdict; reason: string; evidenceIds: string[] }[];
 }
 
@@ -41,7 +43,7 @@ export class VerificationService {
 
   async request(taskRef: string, forceRerun = false): Promise<Record<string, unknown>> {
     const task = await readTask(this.dataDir, taskRef);
-    const key = sha256(JSON.stringify({ task, model: this.modelIdentity }));
+    const key = sha256(JSON.stringify({ task, model: this.modelIdentity, requirementPolicy: this.gateway.policyId ?? REQUIREMENT_POLICY_VERSION }));
     const runId = forceRerun ? randomUUID() : `${key.slice(0, 8)}-${key.slice(8, 12)}-8${key.slice(13, 16)}-a${key.slice(17, 20)}-${key.slice(20, 32)}`;
     const directory = this.directory(runId);
     await mkdir(join(this.dataDir, "verifications"), { recursive: true });
@@ -82,6 +84,10 @@ export class VerificationService {
     return {
       runId, taskRef: record.taskRef, scope: record.scope, trigger: record.trigger, status: "completed", verdict: record.verdict,
       gapStage: record.gapStage, issues: record.issues, requirements: record.requirements, resolutionId: record.resolutionId,
+      ...(record.interpretedUnits ? {
+        interpretationCoverage: { classifiedUnits: record.interpretedUnits.length, unresolvedUnits: record.interpretedUnits.filter(unit => unit.kind === "unresolved").length, meaning: "原文分段去向计数，不是语义正确率或运行通过率" },
+        ...(includeReport ? { interpretedUnits: record.interpretedUnits } : {}),
+      } : {}),
       missingEvidence: record.gapStage === "execution" ? ["针对交付快照的实际运行检查记录"] : ["完整且无未确定要求的任务材料"],
       nextStep: record.gapStage === "execution" ? "该任务已整理要求，但外部项目执行尚未接入；需要项目运行配置和隔离执行能力。" : "补齐材料或确认含糊要求后，登记新的任务快照再验收。",
     };
@@ -158,6 +164,7 @@ export class VerificationService {
         const resolution = await resolveRequirements(intake, this.gateway);
         await saveResolution(resolution, this.dataDir);
         record.resolutionId = resolution.resolutionId;
+        record.interpretedUnits = resolution.interpretedUnits;
         record.gapStage = resolution.resolutionComplete ? "execution" : "requirements";
         record.issues = resolution.resolutionComplete ? ["已整理要求，尚未执行该外部项目；没有完成证据。"] : resolution.coverageIssues;
         record.requirements = currentRequirements(resolution.revisions).map(item => ({

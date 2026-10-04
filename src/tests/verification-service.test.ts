@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { registerTask } from "../task-registry.js";
 import { VerificationService } from "../verification-service.js";
 import type { RequirementGateway } from "../requirements.js";
+import { fixtureUnitCoverage } from "./fixture-unit-coverage.js";
 
 test("shared verification service separates running/unknown/completed and never turns requirement extraction into execution proof", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "vibeguard-verification-"));
@@ -13,10 +14,10 @@ test("shared verification service separates running/unknown/completed and never 
   const gate = new Promise<void>(resolve => { release = resolve; });
   let calls = 0;
   const gateway: RequirementGateway = {
-    async propose() {
+    async propose(input) {
       calls++;
       await gate;
-      return { model: "fixture", proposal: { dispositions: [{ messageId: "u1", kind: "requirements", reason: "用户要求" }], events: [{ action: "add", requirementId: "login", normalized: "增加登录功能", source: { messageId: "u1", quote: "增加登录功能" } }] } };
+      return { model: "fixture", proposal: fixtureUnitCoverage(input, { dispositions: [{ messageId: "u1", kind: "requirements", reason: "用户要求" }], events: [{ action: "add", requirementId: "login", normalized: "增加登录功能", source: { messageId: "u1", quote: "增加登录功能" } }] }) };
     },
   };
   try {
@@ -38,11 +39,20 @@ test("shared verification service separates running/unknown/completed and never 
     assert.equal(completed.verdict, "UNVERIFIABLE");
     assert.equal(completed.gapStage, "execution");
     assert.deepEqual((completed.requirements as any[])[0].sourceRefs.map((item: { quote: string }) => item.quote), ["增加登录功能"]);
+    assert.equal((completed.interpretationCoverage as { classifiedUnits: number }).classifiedUnits, 1);
+    assert.equal(completed.interpretedUnits, undefined);
+    const detailed = await owner.get(runId, true);
+    assert.equal((detailed.interpretedUnits as any[])[0].quote, "增加登录功能");
     assert.deepEqual((completed.requirements as any[])[0].evidenceIds, []);
     const reread = await observer.get(runId);
     assert.equal(reread.status, "completed");
     await observer.request(task.taskRef);
     assert.equal(calls, 1);
+    const updatedPolicy = new VerificationService(dataDir, { ...gateway, policyId: "changed-requirement-policy" }, "fixture");
+    const updated = await updatedPolicy.request(task.taskRef);
+    assert.notEqual(updated.runId, runId);
+    await updatedPolicy.wait(updated.runId as string);
+    assert.equal(calls, 2);
   } finally {
     release();
     await rm(dataDir, { recursive: true, force: true });

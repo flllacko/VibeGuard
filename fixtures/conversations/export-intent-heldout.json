@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "taskId": "export-intent-heldout",
+  "sessionId": "synthetic-heldout",
+  "host": "synthetic-fixture",
+  "taskBoundary": { "startMessageId": "u1", "endMessageId": "u3" },
+  "transcriptCoverage": { "level": "complete", "source": "user_export", "basis": "人工合成回归用例；不是实际用户历史", "missingMessageIds": [] },
+  "messages": [
+    { "id": "u1", "sequence": 1, "role": "user", "text": "添加CSV导出按钮，只导出当前筛选后的订单，金额显示两位小数。原来的下载入口保留。" },
+    { "id": "a1", "sequence": 2, "role": "assistant", "text": "按这四项要求实施，需要执行项目内修改步骤，请确认。" },
+    { "id": "u2", "sequence": 3, "role": "user", "text": "确认" },
+    { "id": "u3", "sequence": 4, "role": "user", "text": "金额改成三位小数，其他要求不变。" }
+  ]
+}

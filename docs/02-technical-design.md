@@ -78,6 +78,14 @@ LLM 用于理解和规划。Runner 执行取证。VerdictEngine 用程序实现�
 
 替代只影响对应要求。例如“门槛改为 150，其他不变”保留一次使用和有效期要求。用户引用他人的建议、讨论中的假设不自动变成正式要求。逐字引用校验只能证明文字存在，不能证明用户采纳；真实 Codex 长对话试点已出现把第三方观点误列为已确定要求的案例。
 
+### 原话拆分记录：2026-09-30 已实现的结构检查
+
+Core 按原文标点生成 `IntentUnit`，标记已识别的外部引文并保留连续引用；分段 ID 使用简短编号。模型在一次调用内同时提出要求事件及 `unitDispositions`，逐段分类为 requirement / authorization / context / unresolved。程序检查分段无遗漏或重复、要求 ID 和来源关系；实际原话由 Core 按原始索引附回 `interpretedUnits`，不接受模型改写。授权只能关联此前已有的目标，不能作为新要求事件来源；重申已有规则可追加原话引用，无须重复建立要求。
+
+这些检查证明记录之间的结构一致，不能确定模型分类、归纳或拆分必然正确。例如把实际诉求错归 context 仍需要案例复核发现。`resolutionComplete` 不等于交付已验证；材料 partial 或有 unresolved 仍保留缺口。历史记录缺少拆分字段时不会自动补称已做过这项检查。
+
+MCP 默认返回拆分计数，显式 `includeReport=true` 时才返回全部分段，避免重复向宿主模型传入整段记录。运行复用键包含整理策略标识，提示词变化后不会复用旧整理结果。此次两段真实材料复测及新人工合成任务记录见 `docs/intent-coverage-evaluation-2026-09-30.md`。
+
 ### Criterion 与 CheckSpec
 
 - criterionId、requirementIds、sourceKind、mandatory、scope。

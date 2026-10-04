@@ -4,7 +4,19 @@ import { test } from "node:test";
 import { ConversationSchema, inspectConversation } from "../intake.js";
 import { parseModelJson, requirementModelPayload } from "../pi-gateway.js";
 import { attributedExternalRanges } from "../provenance.js";
-import { currentRequirements, resolveRequirements, type GatewayInput, type GatewayOutput, type RequirementGateway } from "../requirements.js";
+import { currentRequirements, resolveRequirements as resolveCore, type GatewayInput, type GatewayOutput, type RequirementGateway, type Proposal } from "../requirements.js";
+import type { IntakeResult } from "../intake.js";
+import { fixtureUnitCoverage } from "./fixture-unit-coverage.js";
+
+// Preserve the original fixture scenarios while supplying the new structural
+// contract. Intent-coverage failure tests call resolveRequirements directly.
+interface LegacyFixtureGateway { propose(input: GatewayInput): Promise<Omit<GatewayOutput, "proposal"> & { proposal: Omit<Proposal, "unitDispositions"> }> }
+function resolveRequirements(intake: IntakeResult, gateway: LegacyFixtureGateway, budget?: number) {
+  return resolveCore(intake, { async propose(input) {
+    const output = await gateway.propose(input);
+    return { ...output, proposal: fixtureUnitCoverage(input, output.proposal) };
+  } }, budget);
+}
 
 const fixtureUrl = new URL("../../fixtures/conversations/coupon-complete.json", import.meta.url);
 
@@ -28,8 +40,8 @@ test("a trailing comma outside quoted text is repaired without changing quoted c
   assert.throws(() => parseModelJson('{"quote":123, broken}'));
 });
 
-class FixtureGateway implements RequirementGateway {
-  async propose(input: GatewayInput): Promise<GatewayOutput> {
+class FixtureGateway implements LegacyFixtureGateway {
+  async propose(input: GatewayInput): Promise<Omit<GatewayOutput, "proposal"> & { proposal: Omit<Proposal, "unitDispositions"> }> {
     if (input.messages.some(message => message.id === "u1")) {
       return { model: "fixture-not-a-real-model", proposal: {
         dispositions: [{ messageId: "u1", kind: "requirements", reason: "提出三项规则" }],
@@ -198,7 +210,10 @@ test("an external recommendation can be adopted only with a separate user decisi
   });
   assert.equal(result.resolutionComplete, true);
   assert.equal(result.revisions[0]?.sourceKind, "adopted_external");
-  assert.equal(result.revisions[0]?.sourceRefs.length, 2);
+  const refs = result.revisions[0]!.sourceRefs;
+  assert.equal(refs.some(ref => ref.quote === "每张券只能使用一次"), true);
+  assert.equal(refs.some(ref => ref.quote === "我同意这条，请加入第一版"), true);
+  for (const ref of refs) assert.equal(intake.conversation.messages[0]!.text.slice(ref.start, ref.end), ref.quote);
 });
 
 test("asking to evaluate external advice does not block a separate direct instruction", async () => {

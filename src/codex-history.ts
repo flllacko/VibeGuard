@@ -50,12 +50,21 @@ export class CodexReadClient implements CodexHistoryReader {
     this.process.stdin.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");
   }
 
-  readThread(threadId: string): Promise<unknown> {
-    return this.request("thread/read", { threadId: ThreadIdSchema.parse(threadId), includeTurns: true });
+  async readThread(threadId: string): Promise<unknown> {
+    ThreadIdSchema.parse(threadId);
+    // Avoid returning the entire transcript twice. Large real conversations can
+    // time out on includeTurns=true before paginated reading even begins.
+    const metadata = z.object({ thread: z.object({ id: ThreadIdSchema }).passthrough() }).passthrough().parse(
+      await this.request("thread/read", { threadId, includeTurns: false }),
+    );
+    if (metadata.thread.id !== threadId) throw new Error("Codex returned a different thread");
+    const latest = await this.request("thread/turns/list", { threadId, limit: 1, sortDirection: "desc", itemsView: "full", cursor: null });
+    const page = PageSchema.parse(latest);
+    return { thread: { ...metadata.thread, turns: page.data }, readResponses: { metadata, latest } };
   }
 
   listTurns(threadId: string, cursor: string | null): Promise<unknown> {
-    return this.request("thread/turns/list", { threadId: ThreadIdSchema.parse(threadId), limit: 100, sortDirection: "asc", itemsView: "full", cursor });
+    return this.request("thread/turns/list", { threadId: ThreadIdSchema.parse(threadId), limit: 20, sortDirection: "asc", itemsView: "full", cursor });
   }
 
   async close(): Promise<void> {
@@ -76,7 +85,7 @@ export class CodexReadClient implements CodexHistoryReader {
     if (this.closed || this.process.exitCode !== null || this.process.signalCode !== null) return Promise.reject(new Error("Codex read process is unavailable"));
     return new Promise((resolve, reject) => {
       const id = ++this.nextId;
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Codex read timed out: ${method}`)); }, 15000);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Codex read timed out: ${method}`)); }, 30000);
       this.pending.set(id, { resolve, reject, timer });
       this.process.stdin.write(JSON.stringify({ id, method, params }) + "\n", error => {
         if (!error) return;

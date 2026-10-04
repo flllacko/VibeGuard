@@ -3,6 +3,7 @@ import { z } from "zod";
 import { chunkMessages, type ConversationMessage, type IntakeResult } from "./intake.js";
 import type { SourceRef } from "./contracts.js";
 import { attributedExternalRanges, expressesAdoption, overlapsRange } from "./provenance.js";
+import { intentUnits, UnitDispositionSchema, validateUnitCoverage, type InterpretedUnit } from "./intent-units.js";
 
 const SourceCandidateSchema = z.object({
   messageId: z.string().min(1),
@@ -13,14 +14,15 @@ const SourceCandidateSchema = z.object({
 export const ProposalSchema = z.object({
   dispositions: z.array(z.object({
     messageId: z.string().min(1),
-    kind: z.enum(["requirements", "discussion", "unresolved"]),
+    kind: z.enum(["requirements", "authorization", "discussion", "unresolved"]),
     reason: z.string().min(1),
   })),
   events: z.array(z.discriminatedUnion("action", [
-    z.object({ action: z.literal("add"), requirementId: z.string().regex(/^[a-z][a-z0-9-]*$/), normalized: z.string().min(1), source: SourceCandidateSchema, adoption: SourceCandidateSchema.optional() }),
-    z.object({ action: z.literal("replace"), requirementId: z.string().regex(/^[a-z][a-z0-9-]*$/), normalized: z.string().min(1), source: SourceCandidateSchema, adoption: SourceCandidateSchema.optional() }),
-    z.object({ action: z.literal("cancel"), requirementId: z.string().regex(/^[a-z][a-z0-9-]*$/), source: SourceCandidateSchema, adoption: SourceCandidateSchema.optional() }),
+    z.object({ action: z.literal("add"), requirementId: z.string().regex(/^[a-z][a-z0-9-]*$/), normalized: z.string().min(1), source: SourceCandidateSchema, adoption: SourceCandidateSchema.nullish() }),
+    z.object({ action: z.literal("replace"), requirementId: z.string().regex(/^[a-z][a-z0-9-]*$/), normalized: z.string().min(1), source: SourceCandidateSchema, adoption: SourceCandidateSchema.nullish() }),
+    z.object({ action: z.literal("cancel"), requirementId: z.string().regex(/^[a-z][a-z0-9-]*$/), source: SourceCandidateSchema, adoption: SourceCandidateSchema.nullish() }),
   ])),
+  unitDispositions: z.array(UnitDispositionSchema),
 });
 
 export type Proposal = z.infer<typeof ProposalSchema>;
@@ -50,8 +52,12 @@ export interface GatewayOutput {
 }
 
 export interface RequirementGateway {
+  /** Changes invalidate cached extraction when prompt or policy changes. */
+  readonly policyId?: string;
   propose(input: GatewayInput): Promise<GatewayOutput>;
 }
+
+export const REQUIREMENT_POLICY_VERSION = "intent-unit-coverage-v1";
 
 export interface Resolution {
   schemaVersion: 1;
@@ -62,7 +68,9 @@ export interface Resolution {
   transcriptCoverage: IntakeResult["conversation"]["transcriptCoverage"];
   coverageIssues: string[];
   revisions: RequirementRevision[];
-  dispositions: { messageId: string; kind: "requirements" | "discussion" | "unresolved"; reason: string }[];
+  dispositions: Proposal["dispositions"];
+  /** Absent in historical records; completeness is a structural check, not semantic proof. */
+  interpretedUnits?: InterpretedUnit[];
   processing: { chunk: number; messageIds: string[]; status: "processed" | "failed"; model?: string; promptHash?: string; usage?: GatewayOutput["usage"]; rejectedClaims?: { messageId: string; requirementId: string; reason: string }[]; error?: string }[];
   unprocessedUserMessageIds: string[];
   resolutionComplete: boolean;
@@ -80,6 +88,7 @@ export async function resolveRequirements(intake: IntakeResult, gateway: Require
     coverageIssues: [...intake.coverageIssues],
     revisions: [],
     dispositions: [],
+    interpretedUnits: [],
     processing: [],
     unprocessedUserMessageIds: [...intake.userMessageIds],
     resolutionComplete: false,
@@ -122,6 +131,7 @@ export async function resolveRequirements(intake: IntakeResult, gateway: Require
       if (!output || !applied) throw new Error("No valid requirement proposal");
       result.revisions = applied.revisions;
       result.dispositions.push(...applied.dispositions);
+      result.interpretedUnits!.push(...applied.interpretedUnits);
       result.processing.push({ chunk: index + 1, messageIds: messages.map(message => message.id), status: "processed", model: output.model, promptHash: output.promptHash, usage: accumulatedUsage, rejectedClaims: applied.rejectedClaims });
       const processed = new Set(applied.dispositions.map(item => item.messageId));
       result.unprocessedUserMessageIds = result.unprocessedUserMessageIds.filter(id => !processed.has(id));
@@ -136,6 +146,7 @@ export async function resolveRequirements(intake: IntakeResult, gateway: Require
     result.coverageIssues.push(`未处理的用户消息：${result.unprocessedUserMessageIds.join(", ")}`);
   }
   if (result.dispositions.some(item => item.kind === "unresolved")) result.coverageIssues.push("存在尚未解释的用户消息");
+  if (result.interpretedUnits?.some(unit => unit.kind === "unresolved")) result.coverageIssues.push("存在尚未解释的用户原文片段");
   result.resolutionComplete = result.coverageIssues.length === 0;
   return result;
 }
@@ -154,6 +165,7 @@ function applyProposal(existing: RequirementRevision[], messages: ConversationMe
   revisions: RequirementRevision[];
   dispositions: Proposal["dispositions"];
   rejectedClaims: { messageId: string; requirementId: string; reason: string }[];
+  interpretedUnits: InterpretedUnit[];
 } {
   const userMessages = new Map(messages.filter(message => message.role === "user").map(message => [message.id, message]));
   const dispositionMap = new Map<string, Proposal["dispositions"][number]>();
@@ -166,6 +178,7 @@ function applyProposal(existing: RequirementRevision[], messages: ConversationMe
   const eventCounts = new Map<string, number>();
   const rejectedClaims: { messageId: string; requirementId: string; reason: string }[] = [];
   const staged = structuredClone(existing);
+  const acceptedEvents: { requirementId: string; refs: SourceRef[] }[] = [];
   let lastSequence = -1;
   for (const event of proposal.events) {
     const message = userMessages.get(event.source.messageId);
@@ -189,6 +202,7 @@ function applyProposal(existing: RequirementRevision[], messages: ConversationMe
     }
     eventCounts.set(message.id, (eventCounts.get(message.id) ?? 0) + 1);
     const refs = adoptionRef ? [ref, adoptionRef] : [ref];
+    acceptedEvents.push({ requirementId: event.requirementId, refs });
     const sourceKind = externallyQuoted ? "adopted_external" : "explicit_user";
     const previous = [...staged].reverse().find(revision => revision.requirementId === event.requirementId);
     if (event.action === "add") {
@@ -209,17 +223,61 @@ function applyProposal(existing: RequirementRevision[], messages: ConversationMe
       sourceRefs: [...previous.sourceRefs, ...refs],
     });
   }
+  const interpretedUnits = validateUnitCoverage(intentUnits(messages), proposal.unitDispositions);
   const dispositions = proposal.dispositions.map(disposition => ({ ...disposition }));
   for (const disposition of dispositions) {
     const count = eventCounts.get(disposition.messageId) ?? 0;
     if (disposition.kind === "requirements" && count === 0) {
-      if (!rejectedClaims.some(item => item.messageId === disposition.messageId)) throw new Error(`Requirement message ${disposition.messageId} has no events`);
-      disposition.kind = "unresolved";
-      disposition.reason = `${disposition.reason}；候选要求仅引用未确认采纳的外部材料，需复核`;
+      const restatesExisting = interpretedUnits.some(unit => unit.messageId === disposition.messageId && unit.kind === "requirement" && unit.requirementIds.some(id => existing.some(item => item.requirementId === id && item.status === "active")));
+      if (!restatesExisting) {
+        if (!rejectedClaims.some(item => item.messageId === disposition.messageId)) throw new Error(`Requirement message ${disposition.messageId} has no events`);
+        disposition.kind = "unresolved";
+        disposition.reason = `${disposition.reason}；候选要求仅引用未确认采纳的外部材料，需复核`;
+      }
     }
     if (disposition.kind !== "requirements" && count !== 0) throw new Error(`Non-requirement message ${disposition.messageId} has requirement events`);
   }
-  return { revisions: staged, dispositions, rejectedClaims };
+  for (const unit of interpretedUnits) {
+    if (unit.kind === "requirement" && unit.requirementIds.some(id => rejectedClaims.some(claim => claim.requirementId === id))) {
+      unit.kind = "unresolved";
+      unit.requirementIds = [];
+      unit.reason += "；关联候选被来源门禁拒绝，需复核";
+    }
+    for (const id of unit.requirementIds) {
+      if (unit.kind === "authorization") {
+        const previouslyEstablished = existing.some(item => item.requirementId === id) || acceptedEvents.some(event => event.requirementId === id && event.refs.every(ref => {
+          const source = userMessages.get(ref.messageId)!;
+          const current = userMessages.get(unit.messageId)!;
+          return source.sequence < current.sequence || (source.sequence === current.sequence && ref.end <= unit.start);
+        }));
+        if (!previouslyEstablished) throw new Error(`Authorization unit ${unit.unitId} cannot introduce requirement ${id}`);
+      } else {
+        // A neighboring clause can restate the same rule without duplicating an
+        // event. Preserve that original too, while validating ID integrity.
+        const related = staged.findLast(item => item.requirementId === id);
+        if (!related) throw new Error(`Requirement unit ${unit.unitId} links to unknown requirement ${id}`);
+        const ref = { messageId: unit.messageId, start: unit.start, end: unit.end, quote: unit.quote };
+        if (overlapsRange(ref, attributedExternalRanges(userMessages.get(unit.messageId)!))) {
+          if (!acceptedEvents.some(event => event.requirementId === id && event.refs.some(source => source.messageId === unit.messageId && overlapsRange(source, [unit])))) throw new Error(`External intent unit ${unit.unitId} needs an adopted source-linked event`);
+        } else if (!related.sourceRefs.some(source => source.messageId === ref.messageId && source.start === ref.start && source.end === ref.end)) related.sourceRefs.push(ref);
+      }
+    }
+    if (unit.kind === "authorization" && acceptedEvents.some(event => event.refs.some(ref => ref.messageId === unit.messageId && overlapsRange(ref, [unit])))) {
+      throw new Error(`Authorization unit ${unit.unitId} cannot be the source of a requirement event`);
+    }
+  }
+  for (const event of acceptedEvents) {
+    if (!interpretedUnits.some(unit => unit.kind === "requirement" && unit.requirementIds.includes(event.requirementId) && event.refs.some(ref => ref.messageId === unit.messageId && overlapsRange(ref, [unit])))) {
+      throw new Error(`Requirement event ${event.requirementId} has no matching intent unit`);
+    }
+  }
+  for (const disposition of dispositions) {
+    const units = interpretedUnits.filter(unit => unit.messageId === disposition.messageId);
+    if (units.some(unit => unit.kind === "unresolved")) { disposition.kind = "unresolved"; disposition.reason += "；存在待确认原文片段"; }
+    else if (disposition.kind === "authorization" && units.some(unit => unit.kind !== "authorization" && unit.kind !== "context")) throw new Error(`Authorization message ${disposition.messageId} has non-authorization units`);
+    else if (disposition.kind === "discussion" && units.some(unit => unit.kind === "requirement")) throw new Error(`Discussion message ${disposition.messageId} has requirement units`);
+  }
+  return { revisions: staged, dispositions, rejectedClaims, interpretedUnits };
 }
 
 function validateQuote(message: ConversationMessage, candidate: Proposal["events"][number]["source"]): SourceRef {
