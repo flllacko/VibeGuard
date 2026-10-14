@@ -1,6 +1,6 @@
 # VibeGuard 开发原型
 
-VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证据，分别报告已验证、验证失败、无法验证。当前已完成 **M1 受控样例证据闭环**；**M2 对话整理**和 **M3 需求驱动规划**已部分实现，新增 **M5 主动验收与 MCP 原型**。DeepSeek Flash 已在公开样例及两份新合成对话中整理要求；新优惠券计划在正确、两种缺陷、不可用实现上产生预期证据，详见 [保留样本开发评估](docs/heldout-evaluation-2026-09-29.md)。尚未实现外部项目隔离、真实宿主完整接入或自动验收。
+VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证据，分别报告已验证、验证失败、无法验证。当前已有受控 HTTP 样例、完整对话整理、需求驱动规划和主动 MCP 入口。新增**只读文件验收**：模型从当前要求生成计划，独立进程检查授权目录并保存文件清单、哈希与结论；真实技能安装案例得到 4 条已验证、2 条无法验证。见 [文件验收操作与实测](docs/10-readonly-file-verification.md)。尚未实现外部代码隔离运行、真实宿主完整自动接入或自动验收。
 
 默认由用户说“用 VibeGuard 验收”后发起检查；自动验收作为后续可开启的模式，默认关闭。MCP 是 Agent 调用 VibeGuard 的工具入口，不会自动提供完整聊天记录，也不保证存在 `@VibeGuard` 入口。
 
@@ -30,11 +30,26 @@ node dist/cli.js verify-task <登记输出的taskRef>
 node dist/cli.js verification <运行输出的runId>
 ```
 
-`verify-task` 自动读取环境变量，默认 DeepSeek Flash。**普通外部任务目前只整理要求，仍报告无法验证**；只有绑定冻结计划的内置受控样例能实际执行。MCP 提供 `verify_task`、`get_verification`、`read_evidence` 三个工具，启动文件为 `dist/mcp-entry.js`；支持本地 MCP 的宿主填写启动命令即可连接。
+`verify-task` 自动读取环境变量，默认 DeepSeek Flash。**未绑定执行计划的外部任务只整理要求，仍报告无法验证**；绑定只读文件计划可实际检查文件，绑定内置样例计划可执行 HTTP。MCP 提供 `verify_task`、`get_verification`、`read_evidence` 三个工具，启动文件为 `dist/mcp-entry.js`；支持本地 MCP 的宿主填写启动命令即可连接。
 
 Codex 的早期固定会话试点仍保留：`node dist/cli.js capture-codex <会话编号>`，或 MCP 启动参数 `--codex-thread <编号>`。新接入优先使用上面的采集 Hook，由平台提供当前会话身份，不把一个全局固定编号误用于所有聊天。详见 [Codex 真实会话读取试点](docs/08-codex-history-pilot.md)。
 
 具体启动配置、长任务阶段范围的当前限制和已实测证据见 [主动验收与 MCP 使用说明](docs/07-mcp-prototype.md)。目前需要下载源码构建，尚未发布全局安装包，也未修改任何宿主的全局配置。
+
+## 只读文件验收：已有真实任务证据
+
+适合“复制文件夹、安装技能文件、完整保留素材”等任务。项目配置声明参考源和交付位置，**不写死本次验收标准**；模型从整理好的要求决定查哪些位置、比较结构还是内容。
+
+```powershell
+# 把占位符换成实际输出；file-profile.json 的格式见下方文档
+node dist/cli.js file-plan --resolution <要求整理ID> --profile file-profile.json
+node dist/cli.js register-task --task task.json --file-plan <计划摘要> --file-profile file-profile.json
+node dist/cli.js verify-task <taskRef>
+```
+
+默认 DeepSeek Flash，自动读环境变量。规划需要模型调用；**文件执行、保存和读回证据不调用模型**。同样的 taskRef 会重新观察文件状态；状态变化后生成新运行，不复用旧通过结论。MCP 调用仍只传 taskRef，不能上传检查脚本、路径或 verdict。
+
+真实历史案例：源与交付均 138 文件、13 子目录，逐文件 SHA-256 一致；SKILL.md 在第一层，references/assets 完整。宿主是否加载、是否已向用户说明触发方式不属于本轮文件证据，仍无法验证。详细格式、使用步骤、开发中发现的模型规划错误与边界见 [文件验收说明](docs/10-readonly-file-verification.md)。**构建后要重载正在运行的 MCP，才能发起新增文件执行。**
 
 ## 当前可运行效果
 

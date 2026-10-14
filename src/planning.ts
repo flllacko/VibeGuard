@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { sha256 } from "./storage.js";
 import { currentRequirements, type Resolution } from "./requirements.js";
+import { FileCheckSchema } from "./file-profile.js";
 
 const Identifier = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/);
 
@@ -35,7 +36,7 @@ export const PlanProposalSchema = z.object({
     description: z.string().min(1),
     preconditions: z.array(z.string().min(1)),
     expected: z.string().min(1),
-    checks: z.array(CheckSpecSchema).min(1),
+    checks: z.array(z.union([CheckSpecSchema, FileCheckSchema])).min(1).max(100),
   }).strict()).max(100),
   coverage: z.array(z.object({
     requirementId: Identifier,
@@ -46,6 +47,10 @@ export const PlanProposalSchema = z.object({
 }).strict();
 
 export type PlanProposal = z.infer<typeof PlanProposalSchema>;
+export type HttpCheckSpec = z.infer<typeof CheckSpecSchema>;
+export interface HttpPlanProposal extends Omit<PlanProposal, "criteria"> {
+  criteria: Array<Omit<PlanProposal["criteria"][number], "checks"> & { checks: HttpCheckSpec[] }>;
+}
 
 export interface FrozenPlan extends PlanProposal {
   schemaVersion: 1;
@@ -55,7 +60,10 @@ export interface FrozenPlan extends PlanProposal {
   requirementSnapshotHash: string;
   source: "model-proposal" | "manual-fixture";
 }
+export interface FrozenHttpPlan extends Omit<FrozenPlan, "criteria"> { criteria: HttpPlanProposal["criteria"] }
 
+export function freezePlan(resolution: Resolution, candidate: HttpPlanProposal, source: FrozenPlan["source"]): FrozenHttpPlan;
+export function freezePlan(resolution: Resolution, candidate: unknown, source: FrozenPlan["source"]): FrozenPlan;
 export function freezePlan(resolution: Resolution, candidate: unknown, source: FrozenPlan["source"]): FrozenPlan {
   if (!resolution.resolutionComplete) throw new Error("Cannot plan against incomplete or unresolved conversation material");
   const active = currentRequirements(resolution.revisions);
@@ -72,6 +80,7 @@ export function freezePlan(resolution: Resolution, candidate: unknown, source: F
     for (const check of criterion.checks) {
       if (checkIds.has(check.checkId)) throw new Error(`Duplicate check ID: ${check.checkId}`);
       checkIds.add(check.checkId);
+      if (check.type !== "http_sequence") continue;
       const stepIds = new Set<string>();
       const availableCaptures = new Set<string>();
       for (const step of check.steps) {
@@ -121,9 +130,12 @@ export function freezePlan(resolution: Resolution, candidate: unknown, source: F
 
 export function assertPlanRoutes(plan: Pick<FrozenPlan, "criteria">, allowedRoutes: ReadonlySet<string>): void {
   const allowedShapes = new Set([...allowedRoutes].map(routeShape));
-  for (const criterion of plan.criteria) for (const check of criterion.checks) for (const step of check.steps) {
-    const route = `${step.method} ${step.pathTemplate}`;
-    if (!allowedShapes.has(routeShape(route))) throw new Error(`HTTP route is outside the authorized profile: ${route}`);
+  for (const criterion of plan.criteria) for (const check of criterion.checks) {
+    if (check.type !== "http_sequence") throw new Error("HTTP profile cannot authorize file checks");
+    for (const step of check.steps) {
+      const route = `${step.method} ${step.pathTemplate}`;
+      if (!allowedShapes.has(routeShape(route))) throw new Error(`HTTP route is outside the authorized profile: ${route}`);
+    }
   }
 }
 

@@ -8,6 +8,8 @@ import { saveConversationCopy, readResolution } from "./resolution-storage.js";
 import { readPlanRecord } from "./plan-storage.js";
 import { readApiProfile } from "./pi-plan-gateway.js";
 import { profileHash } from "./plan-profile.js";
+import { assertEvidenceOutsideRoots, assertFilePlanMatchesProfile, fileProfileHash, readFileProfile, saveFileProfile } from "./file-profile.js";
+import { freezePlan } from "./planning.js";
 
 export const RefSchema = z.string().uuid();
 const HashSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -21,6 +23,7 @@ export const TaskRecordSchema = z.object({
   execution: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("requirements_only") }).strict(),
     z.object({ kind: z.literal("controlled_demo"), planHash: HashSchema, profileSha256: HashSchema, variant: z.enum(["correct", "faulty", "unavailable"]) }).strict(),
+    z.object({ kind: z.literal("readonly_files"), planHash: HashSchema, profileSha256: HashSchema }).strict(),
   ]),
 }).strict();
 export type TaskRecord = z.infer<typeof TaskRecordSchema>;
@@ -28,7 +31,8 @@ export type TaskRecord = z.infer<typeof TaskRecordSchema>;
 export const demoProfilePath = fileURLToPath(new URL("../fixtures/profiles/coupon-api.json", import.meta.url));
 const demoConversationPath = fileURLToPath(new URL("../fixtures/conversations/coupon-complete.json", import.meta.url));
 
-export async function registerTask(dataDir: string, conversationPath: string, scope: TaskRecord["scope"] = "final", demo?: { planHash: string; variant: "correct" | "faulty" | "unavailable" }): Promise<TaskRecord> {
+export async function registerTask(dataDir: string, conversationPath: string, scope: TaskRecord["scope"] = "final", demo?: { planHash: string; variant: "correct" | "faulty" | "unavailable" }, files?: { planHash: string; profilePath: string }): Promise<TaskRecord> {
+  if (demo && files) throw new Error("One task cannot bind both demo and file execution");
   const intake = await readConversation(conversationPath);
   let execution: TaskRecord["execution"] = { kind: "requirements_only" };
   if (demo) {
@@ -40,6 +44,18 @@ export async function registerTask(dataDir: string, conversationPath: string, sc
     const profileSha256 = profileHash(await readApiProfile(demoProfilePath));
     if (record.generation.profileSha256 !== profileSha256) throw new Error("Demo plan was frozen against a different API profile");
     execution = { kind: "controlled_demo", planHash: demo.planHash, profileSha256, variant: demo.variant };
+  }
+  if (files) {
+    const profile = await readFileProfile(files.profilePath);
+    assertEvidenceOutsideRoots(dataDir, profile);
+    const saved = await readPlanRecord(dataDir, files.planHash);
+    const resolution = await readResolution(saved.plan.resolutionId, dataDir);
+    if (saved.plan.conversationSha256 !== intake.rawSha256 || resolution.conversationSha256 !== intake.rawSha256) throw new Error("File plan does not match the registered conversation");
+    const validated = freezePlan(resolution, { criteria: saved.plan.criteria, coverage: saved.plan.coverage }, saved.plan.source);
+    if (validated.planHash !== files.planHash || saved.plan.requirementSnapshotHash !== validated.requirementSnapshotHash) throw new Error("File plan snapshot mismatch");
+    assertFilePlanMatchesProfile(validated, profile);
+    if (saved.generation.profileSha256 !== fileProfileHash(profile)) throw new Error("File plan was frozen against another profile");
+    execution = { kind: "readonly_files", planHash: files.planHash, profileSha256: await saveFileProfile(dataDir, profile) };
   }
   const record = TaskRecordSchema.parse({ schemaVersion: 1, taskRef: randomUUID(), taskId: intake.conversation.taskId, registeredAt: new Date().toISOString(), conversationSha256: intake.rawSha256, scope, execution });
   await saveConversationCopy(intake, conversationPath, dataDir);

@@ -21,6 +21,8 @@ import { registerTask } from "./task-registry.js";
 import { VerificationService } from "./verification-service.js";
 import { captureCodexTask } from "./codex-history.js";
 import { buildConnectionConfig } from "./connection-config.js";
+import { assertFilePlanMatchesProfile, fileProfileHash, readFileProfile } from "./file-profile.js";
+import { PiFilePlanGateway } from "./pi-file-plan-gateway.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -53,6 +55,7 @@ async function main(): Promise<void> {
     return;
   }
   if (!command || command === "help") {
+    console.log("Read-only files: vibeguard file-plan --resolution ID --profile FILE [--provider ID]\n                vibeguard register-task --task FILE --file-plan HASH --file-profile FILE\n                vibeguard verify-task TASK_REF");
     console.log("User setup (prints configuration only): vibeguard setup codex|claude-code [--format json] [--codex-bin PATH]");
     console.log("Usage: vibeguard providers\n       vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID [--model ID] [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard capture-trae-hook (reads one Hook JSON from stdin)\n       vibeguard export-trae-session SESSION_ID (prints observed JSON)\n       vibeguard plan --resolution ID --profile FILE --provider ID [--model ID]\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard run-demo-plan --plan PLAN_HASH --variant correct|faulty|unavailable [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
     console.log("Manual acceptance: vibeguard capture-codex THREAD_ID [--scope final|checkpoint] [--codex-bin PATH]\n                   vibeguard register-task --task FILE [--scope final|checkpoint] [--demo-plan HASH --demo-variant correct|faulty|unavailable]\n                   vibeguard verify-task TASK_REF [--force-rerun] [--provider ID] [--model ID]\n                   vibeguard verification RUN_ID\nMCP stdio server: node dist/mcp-entry.js [--data-dir PATH] [--provider ID] [--model ID] [--codex-thread ID --codex-bin PATH]");
@@ -72,9 +75,12 @@ async function main(): Promise<void> {
     if (scope !== "final" && scope !== "checkpoint") throw new Error("Invalid --scope");
     const planHash = option(args, "--demo-plan");
     const variant = option(args, "--demo-variant");
+    const filePlan = option(args, "--file-plan");
+    const fileProfile = option(args, "--file-profile");
+    if (Boolean(filePlan) !== Boolean(fileProfile)) throw new Error("--file-plan and --file-profile must be supplied together");
     if (Boolean(planHash) !== Boolean(variant)) throw new Error("--demo-plan and --demo-variant must be supplied together");
     if (variant !== undefined && variant !== "correct" && variant !== "faulty" && variant !== "unavailable") throw new Error("Invalid --demo-variant");
-    const task = await registerTask(dataDir, taskPath, scope, planHash && variant ? { planHash, variant } : undefined);
+    const task = await registerTask(dataDir, taskPath, scope, planHash && variant ? { planHash, variant } : undefined, filePlan && fileProfile ? { planHash: filePlan, profilePath: fileProfile } : undefined);
     console.log(JSON.stringify(task, null, 2));
     return;
   }
@@ -143,6 +149,20 @@ async function main(): Promise<void> {
     const resolution = await readResolution(args[0], dataDir);
     if (outputFormat(args) === "json") console.log(JSON.stringify(resolution, null, 2));
     else printResolution(resolution);
+    return;
+  }
+  if (command === "file-plan") {
+    const resolutionId = option(args, "--resolution");
+    const profilePath = option(args, "--profile");
+    if (!resolutionId || !profilePath) throw new Error("file-plan requires --resolution ID and --profile FILE");
+    const selection = selectModel(option(args, "--provider") ?? "deepseek", option(args, "--model"));
+    const resolution = await readResolution(resolutionId, dataDir);
+    const profile = await readFileProfile(profilePath);
+    const generation = await new PiFilePlanGateway(selection.piProvider, selection.modelId).propose(resolution, profile);
+    const plan = freezePlan(resolution, generation.proposal, "model-proposal");
+    assertFilePlanMatchesProfile(plan, profile);
+    const storedAt = await savePlanRecord(dataDir, { plan, generation: { model: generation.model, promptHash: generation.promptHash, usage: generation.usage, profileId: profile.profileId, profileSha256: fileProfileHash(profile) } });
+    console.log(JSON.stringify({ planHash: plan.planHash, storedAt, coverage: plan.coverage, meaning: "计划已冻结，尚未读取交付或得出验收结论" }, null, 2));
     return;
   }
   if (command === "plan") {

@@ -14,6 +14,10 @@ import { startDemoServer } from "./demo-app.js";
 import { demoSnapshotHash } from "./demo-plan.js";
 import { sha256 } from "./storage.js";
 import { demoProfilePath, readTask, RefSchema, type TaskRecord } from "./task-registry.js";
+import { assertEvidenceOutsideRoots, assertFilePlanMatchesProfile, readStoredFileProfile } from "./file-profile.js";
+import { captureFileSnapshot, type FileSnapshot } from "./file-snapshot.js";
+import { FILE_RUNNER_VERSION, runFilePlan } from "./file-runner.js";
+import { freezePlan } from "./planning.js";
 
 export interface VerificationRecord {
   schemaVersion: 1;
@@ -43,7 +47,20 @@ export class VerificationService {
 
   async request(taskRef: string, forceRerun = false): Promise<Record<string, unknown>> {
     const task = await readTask(this.dataDir, taskRef);
-    const key = sha256(JSON.stringify({ task, model: this.modelIdentity, requirementPolicy: this.gateway.policyId ?? REQUIREMENT_POLICY_VERSION }));
+    let fileSnapshot: FileSnapshot | undefined;
+    if (task.execution.kind === "readonly_files") {
+      const saved = await readPlanRecord(this.dataDir, task.execution.planHash);
+      const resolution = await readResolution(saved.plan.resolutionId, this.dataDir);
+      const profile = await readStoredFileProfile(this.dataDir, task.execution.profileSha256);
+      const validated = freezePlan(resolution, { criteria: saved.plan.criteria, coverage: saved.plan.coverage }, saved.plan.source);
+      if (validated.planHash !== task.execution.planHash || resolution.conversationSha256 !== task.conversationSha256 || saved.generation.profileSha256 !== task.execution.profileSha256) throw new Error("Registered file plan or profile changed");
+      assertEvidenceOutsideRoots(this.dataDir, profile);
+      assertFilePlanMatchesProfile(validated, profile);
+      fileSnapshot = await captureFileSnapshot(profile);
+    }
+    const key = sha256(JSON.stringify({ task, model: this.modelIdentity, requirementPolicy: this.gateway.policyId ?? REQUIREMENT_POLICY_VERSION,
+      ...(fileSnapshot ? { fileRunner: FILE_RUNNER_VERSION, fileSnapshotHash: fileSnapshot.snapshotHash } : {}),
+    }));
     const runId = forceRerun ? randomUUID() : `${key.slice(0, 8)}-${key.slice(8, 12)}-8${key.slice(13, 16)}-a${key.slice(17, 20)}-${key.slice(20, 32)}`;
     const directory = this.directory(runId);
     await mkdir(join(this.dataDir, "verifications"), { recursive: true });
@@ -58,7 +75,7 @@ export class VerificationService {
       conversationSha256: task.conversationSha256, startedAt: new Date().toISOString(), status: "running", issues: [], requirements: [],
     };
     await this.save(initial);
-    const work = this.execute(initial, task).catch(error => {
+    const work = this.execute(initial, task, fileSnapshot).catch(error => {
       // Protocol stdout must contain only MCP messages.
       console.error(`VibeGuard run ${runId} could not persist completion: ${error instanceof Error ? error.message : String(error)}`);
     }).finally(() => this.active.delete(runId));
@@ -78,6 +95,8 @@ export class VerificationService {
       return {
         runId, taskRef: record.taskRef, scope: record.scope, trigger: record.trigger, status: "completed", verdict: report.verdict,
         requirements: report.requirements, issues: record.issues, limitations: report.limitations,
+        ...(record.gapStage ? { gapStage: record.gapStage } : {}),
+        kind: report.kind, targetSnapshotHash: report.targetSnapshotHash,
         reportRef: record.reportRunId, ...(includeReport ? { report } : {}),
       };
     }
@@ -151,7 +170,7 @@ export class VerificationService {
     }
   }
 
-  private async execute(record: VerificationRecord, task: TaskRecord): Promise<void> {
+  private async execute(record: VerificationRecord, task: TaskRecord, fileSnapshot?: FileSnapshot): Promise<void> {
     let failureStage: VerificationRecord["gapStage"] = "material";
     try {
       const intake = await readConversation(join(this.dataDir, "conversations", `${task.conversationSha256}.json`));
@@ -171,6 +190,20 @@ export class VerificationService {
           requirementId: item.requirementId, normalized: item.normalized, sourceRefs: item.sourceRefs,
           verdict: "UNVERIFIABLE", reason: record.gapStage === "execution" ? "本轮未取得该要求的运行证据" : "要求整理仍有缺口，此项仅为候选要求", evidenceIds: [],
         }));
+      } else if (task.execution.kind === "readonly_files") {
+        failureStage = "execution";
+        const saved = await readPlanRecord(this.dataDir, task.execution.planHash);
+        const resolution = await readResolution(saved.plan.resolutionId, this.dataDir);
+        const profile = await readStoredFileProfile(this.dataDir, task.execution.profileSha256);
+        if (resolution.conversationSha256 !== task.conversationSha256 || saved.generation.profileSha256 !== task.execution.profileSha256) throw new Error("File execution binding changed");
+        assertEvidenceOutsideRoots(this.dataDir, profile);
+        const result = await runFilePlan(saved.plan, resolution, profile, fileSnapshot);
+        await savePlannedRun(this.dataDir, result.report, result.evidence);
+        record.resolutionId = resolution.resolutionId;
+        record.reportRunId = result.report.runId;
+        record.verdict = result.report.verdict;
+        record.requirements = result.report.requirements;
+        if (result.report.verdict === "UNVERIFIABLE") record.gapStage = "execution";
       } else {
         failureStage = "execution";
         const saved = await readPlanRecord(this.dataDir, task.execution.planHash);

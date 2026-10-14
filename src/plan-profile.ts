@@ -24,7 +24,9 @@ export function assertPlanMatchesProfile(plan: Pick<FrozenPlan, "criteria">, pro
     isolation.set(shape, fields);
   }
   const claimed = new Map<string, string>();
-  for (const criterion of plan.criteria) for (const check of criterion.checks) for (const step of check.steps) {
+  for (const criterion of plan.criteria) for (const check of criterion.checks) {
+    if (check.type !== "http_sequence") throw new Error("HTTP profile cannot authorize file checks");
+    for (const step of check.steps) {
     const shape = routeShape(step.method, step.pathTemplate);
     const route = routes.get(shape);
     if (!route) throw new Error(`HTTP route is outside the authorized profile: ${shape}`);
@@ -44,6 +46,7 @@ export function assertPlanMatchesProfile(plan: Pick<FrozenPlan, "criteria">, pro
         throw new Error(`Independent checks ${previous} and ${check.checkId} reuse ${field}=${JSON.stringify(value)}`);
       }
       claimed.set(key, check.checkId);
+    }
     }
   }
 }

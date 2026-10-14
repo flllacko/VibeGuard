@@ -8,6 +8,7 @@ import { assertPlanMatchesProfile } from "./plan-profile.js";
 import type { ApiProfile } from "./pi-plan-gateway.js";
 import { currentRequirements, type Resolution } from "./requirements.js";
 import { sha256 } from "./storage.js";
+import type { FileEvidence } from "./file-runner.js";
 
 export interface HttpStepEvidence {
   evidenceId: string;
@@ -21,7 +22,7 @@ export interface HttpStepEvidence {
 
 export interface PlannedRunReport {
   schemaVersion: 1;
-  kind: "planned-http-run";
+  kind: "planned-http-run" | "planned-file-run";
   runId: string;
   createdAt: string;
   planHash: string;
@@ -79,6 +80,7 @@ export async function runFrozenPlan(plan: FrozenPlan, resolution: Resolution, ba
   for (const criterion of plan.criteria) {
     const checks: PlannedRunReport["criteria"][number]["checks"] = [];
     for (const check of criterion.checks) {
+      if (check.type !== "http_sequence") throw new Error("HTTP runner does not execute file checks");
       const executed = await runHttpSequence(check, base, evidence);
       checks.push({ checkId: check.checkId, ...executed });
     }
@@ -105,7 +107,7 @@ export async function runFrozenPlan(plan: FrozenPlan, resolution: Resolution, ba
   return { report, evidence };
 }
 
-async function runHttpSequence(check: FrozenPlan["criteria"][number]["checks"][number], base: URL, evidence: HttpStepEvidence[]): Promise<{ verdict: Verdict; evidenceIds: string[]; reason: string }> {
+async function runHttpSequence(check: Extract<FrozenPlan["criteria"][number]["checks"][number], { type: "http_sequence" }>, base: URL, evidence: HttpStepEvidence[]): Promise<{ verdict: Verdict; evidenceIds: string[]; reason: string }> {
   const captures = new Map<string, string>();
   const evidenceIds: string[] = [];
   for (const step of check.steps) {
@@ -171,7 +173,7 @@ function combine(verdicts: Verdict[]): Verdict {
   return "VERIFIED";
 }
 
-export async function savePlannedRun(dataDir: string, report: PlannedRunReport, evidence: HttpStepEvidence[]): Promise<string> {
+export async function savePlannedRun(dataDir: string, report: PlannedRunReport, evidence: Array<HttpStepEvidence | FileEvidence>): Promise<string> {
   const directory = join(dataDir, "planned-runs", report.runId);
   await mkdir(join(dataDir, "planned-runs"), { recursive: true });
   await mkdir(directory, { recursive: false });

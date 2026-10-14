@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { assertPlanRoutes, freezePlan, type PlanProposal } from "../planning.js";
+import { assertPlanRoutes, freezePlan, type HttpPlanProposal as PlanProposal } from "../planning.js";
 import { assertPlanMatchesProfile } from "../plan-profile.js";
 import type { ApiProfile } from "../pi-plan-gateway.js";
 import { sha256 } from "../storage.js";

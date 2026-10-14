@@ -1,12 +1,12 @@
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { readConversation, type IntakeResult } from "./intake.js";
-import { freezePlan, type FrozenPlan, type PlanProposal } from "./planning.js";
+import { freezePlan, type FrozenHttpPlan, type HttpPlanProposal as PlanProposal } from "./planning.js";
 import type { Resolution, RequirementRevision } from "./requirements.js";
 import type { SourceRef } from "./contracts.js";
 import { sha256 } from "./storage.js";
 
-export async function makeManualDemoPlan(): Promise<{ resolution: Resolution; plan: FrozenPlan }> {
+export async function makeManualDemoPlan(): Promise<{ resolution: Resolution; plan: FrozenHttpPlan }> {
   const intake = await readConversation(fileURLToPath(new URL("../fixtures/conversations/coupon-complete.json", import.meta.url)));
   const u1 = source(intake, "u1", "订单满 100 元减 20 元");
   const u1Single = source(intake, "u1", "每张券只能使用一次");

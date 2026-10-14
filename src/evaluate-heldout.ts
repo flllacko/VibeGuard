@@ -96,8 +96,8 @@ function hasDefectEvidence(
     if (!failedIds.has(item.evidenceId) || item.request.method !== "POST" || item.response?.status !== 201) continue;
     const request = item.request.body as { amountCents?: unknown } | undefined;
     const response = item.response.body as { discountCents?: unknown } | undefined;
-    const step = criteria.flatMap(criterion => criterion.checks).find(check => check.checkId === item.checkId)
-      ?.steps.find(candidate => candidate.stepId === item.stepId);
+    const check = criteria.flatMap(criterion => criterion.checks).find(candidate => candidate.checkId === item.checkId);
+    const step = check?.type === "http_sequence" ? check.steps.find(candidate => candidate.stepId === item.stepId) : undefined;
     const expected = step?.assertions.find(assertion => assertion.pointer === "/discountCents")?.equals;
     if (defect === "threshold" && typeof request?.amountCents === "number" &&
         request.amountCents >= 8000 && request.amountCents < correct.thresholdCents &&
