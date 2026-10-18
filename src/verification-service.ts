@@ -26,6 +26,7 @@ import {
   REQUIREMENT_REVIEW_POLICY_VERSION, type RequirementReviewSelection, type StoredRequirementReview,
 } from "./requirement-review.js";
 import type { ReviewReplyGateway } from "./review-reply-intent.js";
+import { inspectExternalProject, readExternalProject } from "./external-project.js";
 
 export interface VerificationRecord {
   schemaVersion: 1;
@@ -51,6 +52,7 @@ export interface VerificationRecord {
   requirementReviewRef?: string;
   reportRunId?: string;
   interpretedUnits?: InterpretedUnit[];
+  externalProject?: Awaited<ReturnType<typeof inspectExternalProject>>;
   requirements: { requirementId: string; normalized: string; sourceRefs: SourceRef[]; verdict: Verdict; reason: string; evidenceIds: string[] }[];
 }
 
@@ -68,6 +70,10 @@ export class VerificationService {
       return this.request(selected.taskRef, forceRerun);
     }
     const task = await readTask(this.dataDir, taskRef);
+    if (task.execution.kind === "external_project") {
+      const binding = await readExternalProject(this.dataDir, task.execution.projectRef);
+      if (binding.project.recordHash !== task.execution.projectRecordHash || binding.requirements.baseConversationSha256 !== task.conversationSha256) throw new Error("Registered external project binding changed");
+    }
     let fileSnapshot: FileSnapshot | undefined;
     if (task.execution.kind === "readonly_files") {
       const saved = await readPlanRecord(this.dataDir, task.execution.planHash);
@@ -116,7 +122,7 @@ export class VerificationService {
       let acceptancePlan;
       if (includeReport) {
         const task = await readTask(this.dataDir, record.taskRef);
-        if (task.execution.kind !== "requirements_only") {
+        if (task.execution.kind === "readonly_files" || task.execution.kind === "controlled_demo") {
           const saved = await readPlanRecord(this.dataDir, task.execution.planHash);
           if (saved.plan.planHash !== report.planHash) throw new Error("Report plan differs from registered task");
           const resolution = await readResolution(saved.plan.resolutionId, this.dataDir);
@@ -140,6 +146,7 @@ export class VerificationService {
     return {
       runId, taskRef: record.taskRef, scope: record.scope, trigger: record.trigger, status: "completed", verdict: record.verdict,
       gapStage: record.gapStage, issues: record.issues, requirements: record.requirements, resolutionId: record.resolutionId,
+      ...(record.externalProject ? { externalProject: record.externalProject } : {}),
       ...(taskScopeReview ? { taskScopeReview } : {}),
       ...(requirementReview ? { requirementReview } : {}),
       ...(record.selectedScope ? { selectedScope: record.selectedScope } : {}),
@@ -156,13 +163,13 @@ export class VerificationService {
         interpretationCoverage: { classifiedUnits: record.interpretedUnits.length, unresolvedUnits: record.interpretedUnits.filter(unit => unit.kind === "unresolved").length, meaning: "原文分段去向计数，不是语义正确率或运行通过率" },
         ...(includeReport ? { interpretedUnits: record.interpretedUnits } : {}),
       } : {}),
-      missingEvidence: review ? [
+      missingEvidence: record.externalProject ? record.externalProject.missingEvidence : review ? [
         ...review.materialIssues,
         ...review.unresolved.filter(item => !item.resolved).map(item => `${item.displayId}：${item.reason}`),
         ...(review.status !== "confirmed" ? ["用户对当前要求清单的确认"] : []),
         "针对交付快照的实际运行检查记录",
       ] : [...(record.materialGaps?.length ? record.materialGaps.map(item => item.detail) : record.gapStage === "scope" ? ["用户对本次任务范围的明确选择"] : record.gapStage === "execution" ? ["针对交付快照的实际运行检查记录"] : ["完整且无未确定要求的任务材料"]), ...(record.textCoverage?.unresolvedUnits ? [`仍有 ${record.textCoverage.unresolvedUnits} 个可见文字片段需要解释。`] : [])],
-      nextStep: review ? review.status === "confirmed"
+      nextStep: record.externalProject ? "外部项目副本与要求版本已绑定。尚需生成验收计划并在 Docker 中执行；准备成功不能视为任务通过。工作区有新修改时重新准备快照。" : review ? review.status === "confirmed"
         ? review.materialIssues.length ? "要求理解已确认，材料缺口仍保留。补齐材料后需登记新快照重新审查；没有执行证据仍无法验证。" : !review.items.some(item => item.status === "active") ? "本次清单没有有效验收目标，已保存排除记录；新增目标后再验收，不会因此宣布通过。" : "已保存这版确认的要求；规划前须重新核对当前聊天。外部项目执行尚未接入，需项目运行配置和隔离执行能力。不得把确认理解当作验收通过。"
         : "将 requirementReview.text 作为完整独立消息原样展示（含短标识，不加前后附言）。用户可直接修改、取消、合并、补充要求，或说明 Q 编号的去向；真实回复后重新采集并传 requirementReview={reviewRef}。修改后展示新清单，再确认。"
         : record.gapStage === "scope" ? "展示 taskScopeReview。请用户选择候选的 confirmationReply（含本次短编号）或要求调整；真实回复后通过采集 Hook 重新调用 verify_task，传入 taskSelection。选择不代表验收通过。" : record.gapStage === "execution" ? "该任务已整理要求，但外部项目执行尚未接入；需要项目运行配置和隔离执行能力。" : record.selectedScope && record.gapStage === "material" ? `${record.requirementsStatus ? "已尝试整理可见文字候选，不能据此执行计划或宣布通过。" : ""}范围已经确认，无须再次选择。请按 materialGaps 中的消息引用补齐材料，再登记新快照复验；现有结论不变为通过。` : "补齐材料或确认含糊要求后，登记新的任务快照再验收。",
@@ -291,6 +298,14 @@ export class VerificationService {
         record.requirementReviewRef = review.reviewRef;
         record.gapStage = review.materialIssues.length ? "material" : "requirements_review";
         record.issues.push("已生成要求审查清单；请用户纠正或确认，确认理解不代表验收通过。");
+      } else if (task.execution.kind === "external_project") {
+        failureStage = "execution";
+        const project = await inspectExternalProject(this.dataDir, task.execution.projectRef);
+        record.externalProject = project;
+        record.gapStage = "execution";
+        record.issues = ["已准备外部项目副本和当前性核对过的要求版本；尚未启动项目，没有执行证据。"];
+        record.requirements = project.requirements.map(item => ({ requirementId: item.requirementId, normalized: item.normalized, sourceRefs: item.sourceRefs,
+          verdict: "UNVERIFIABLE", reason: "项目准备记录不是完成证据；该要求尚未实际检查", evidenceIds: [] }));
       } else if (task.execution.kind === "readonly_files") {
         failureStage = "execution";
         const saved = await readPlanRecord(this.dataDir, task.execution.planHash);

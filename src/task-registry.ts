@@ -24,6 +24,7 @@ export const TaskRecordSchema = z.object({
     z.object({ kind: z.literal("requirements_only") }).strict(),
     z.object({ kind: z.literal("controlled_demo"), planHash: HashSchema, profileSha256: HashSchema, variant: z.enum(["correct", "faulty", "unavailable"]) }).strict(),
     z.object({ kind: z.literal("readonly_files"), planHash: HashSchema, profileSha256: HashSchema }).strict(),
+    z.object({ kind: z.literal("external_project"), projectRef: RefSchema, projectRecordHash: HashSchema }).strict(),
   ]),
 }).strict();
 export type TaskRecord = z.infer<typeof TaskRecordSchema>;

@@ -96,6 +96,12 @@ node dist/cli.js evidence <证据ID>
 
 ## 导入完整对话与整理要求（M2 开发中）
 
+### 外部项目准备（D1）
+
+已实现独立的 `external_project` 准备类型：项目运行配置、实际文件副本、确认要求与宿主采集绑定。`project-prepare --profile FILE --review REVIEW_REF --current-task FRESH_TASK_REF` 登记项目，`project-inspect PROJECT_REF` 复核副本；二者均通过 `node dist/cli.js` 调用。后续使用输出的任务编号调用原有 CLI/MCP。准备结果始终为“尚未执行 / 无法验证”，不是通用动态验收已完成。
+
+副本默认排除依赖、工具数据及常见本地密钥文件名，保留排除账目；证据目录必须在项目目录外。源码变更需新副本。Docker 启动、外部动态规划及 `.exe` 尚待后续阶段。配置及边界见[外部项目准备说明](docs/18-external-project-preparation.md)。
+
 `intake` 接受一份 JSON 对话文件，保存消息原文、顺序、任务边界、来源和内容摘要。示例格式见 `fixtures/conversations/coupon-complete.json`。`transcriptCoverage.level: complete` 是提交者对**明确任务边界内**材料的声明；它本身不能证明宿主没有漏发消息。程序还会检查首尾 ID、序号缺口和摘要来源。
 
 ```powershell

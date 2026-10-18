@@ -2,6 +2,8 @@
 
 更新时间：2026-09-30。以下区分客户已确认方向和实施中的临时决定。
 
+2026-10-18 新增决定：最终提供 Windows `.exe` 本地任务验收台，保留原聊天 MCP 入口及共用 Core；用户明确要求继续打通外部项目验收和证据链。Electron + TypeScript 为工程默认桌面方案，尚未安装或打包；Docker 作为既有外部代码隔离路线继续实施。开源复用和 Windows 交付门槛见[增量计划](17-desktop-and-external-project-plan.md)。
+
 | 决定 | 原因 | 状态 |
 | --- | --- | --- |
 | TypeScript + Node.js 为主语言和运行环境 | 统一 Core、CLI、MCP、浏览器工具和接入层 | 已确认方向 |

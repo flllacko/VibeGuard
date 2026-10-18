@@ -4,6 +4,8 @@
 
 本目录主要是设计文档。计划中的功能、命令和界面不自动代表已有实现；实际完成情况以 [实施状态](implementation-status.md) 和仓库根目录 [README](../README.md) 为准。M1 的受控样例闭环已运行，M2/M3 已在公开样例和一次[保留样本开发评估](heldout-evaluation-2026-09-29.md)中串起要求、模型计划和受控执行；这仍不是外部项目的完整产品验收。
 
+2026-10-18 最新交付决定：增加 Windows `.exe` 本地任务验收台，保留 Core/CLI/MCP，并继续打通外部项目运行、人工审查与证据链。实施顺序和支持边界见[桌面与外部项目计划](17-desktop-and-external-project-plan.md)。文档中的具体业务仅作为测试样例；本决定不表示安装包、Docker 执行或任意项目支持已经完成。
+
 ## 1. 先读哪一份
 
 用户自己在平台配置 MCP 和对话采集，请先读 [用户接入说明](09-user-mcp-setup.md)，运行 `node dist/cli.js setup codex` 或 `setup claude-code` 生成本机字段；命令不修改宿主配置。
@@ -26,6 +28,8 @@
 | [部分材料与文字候选](14-partial-material-requirements.md) | 用户、开发者 | 前文附件未解析时继续整理文字，来源检查、真实试跑及仍无法通过的原因 |
 | [原聊天要求审查与修订](15-requirement-review.md) | 用户、开发者 | 纠正、取消、合并、补充要求，保存真实回复与确认版本；不把确认理解当作通过 |
 | [自然修订真实模型联调](16-live-review-evaluation.md) | 用户、开发者 | Flash 实际调用、首轮失败与通用修复、复测、新样本、成本及结论边界 |
+| [Windows 桌面与外部验收计划](17-desktop-and-external-project-plan.md) | 用户、开发者 | `.exe` 交付目标、外部项目里程碑、Docker 职责与开源复用 |
+| [外部项目准备](18-external-project-preparation.md) | 接入开发者、体验者 | 项目运行配置、代码副本、已确认要求和当前采集绑定；准备不等于执行 |
 
 客户先读产品需求与伙伴介绍。开始编码时，Codex 按本入口、产品需求、技术设计、实施计划、验收标准的顺序读取。
 
