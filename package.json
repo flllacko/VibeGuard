@@ -13,6 +13,7 @@
     "test": "node --test dist/tests/*.test.js",
     "mcp": "node dist/mcp-entry.js",
     "eval:review": "node dist/evaluate-review-replies.js",
+    "eval:runtime": "node dist/evaluate-docker-runtime.js",
     "verify:demo": "node dist/cli.js verify --variant faulty",
     "verify:demo:correct": "node dist/cli.js verify --variant correct"
   },
@@ -26,6 +27,7 @@
     "@earendil-works/pi-ai": "0.87.1",
     "@modelcontextprotocol/server": "2.2.0",
     "smol-toml": "1.9.1",
+    "tar-stream": "3.2.2",
     "zod": "^4.6.5"
   }
 }

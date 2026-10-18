@@ -32,6 +32,8 @@ import { readTask } from "./task-registry.js";
 import { confirmedRequirementSnapshot, readRequirementReview, requirementReviewView } from "./requirement-review.js";
 import { PiReviewReplyGateway } from "./pi-review-reply-gateway.js";
 import { inspectExternalProject, prepareExternalProject } from "./external-project.js";
+import { checkExternalProjectRuntime } from "./docker-runtime.js";
+import { readRuntimeReport } from "./runtime-store.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -79,6 +81,7 @@ async function main(): Promise<void> {
   }
   if (!command || command === "help") {
     console.log("External projects (preparation only): vibeguard project-prepare --profile FILE --review REVIEW_REF --current-task FRESH_TASK_REF\n                                    vibeguard project-inspect PROJECT_REF\nSaves a delivery copy and confirmed requirement binding; does not execute project code.");
+    console.log("Docker runtime check: vibeguard project-runtime PROJECT_REF\n                      vibeguard runtime-report RUN_ID\nExplicitly starts the prepared copy in Docker, probes readiness and cleans it up. Readiness is not task acceptance.");
     console.log("Read-only files: vibeguard file-plan --resolution ID --profile FILE [--provider ID]\n                vibeguard register-task --task FILE --file-plan HASH --file-profile FILE\n                vibeguard verify-task TASK_REF");
     console.log("User setup (prints configuration only): vibeguard setup codex|claude-code [--format json] [--codex-bin PATH]");
     console.log("Connection wizard: vibeguard connect [codex|claude-code] [--dry-run | --yes]\n                   vibeguard doctor codex|claude-code\nNon-interactive connect previews only unless --yes is explicitly supplied.");
@@ -86,6 +89,20 @@ async function main(): Promise<void> {
     console.log("Requirements review: vibeguard requirement-review REVIEW_REF [--format json]\n                     vibeguard verify-task FRESH_TASK_REF --review REVIEW_REF\n                     vibeguard confirmed-requirements REVIEW_REF\nCorrections are read from the newly captured original user reply; --review cannot approve on its own.");
     console.log("Usage: vibeguard providers\n       vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID [--model ID] [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard capture-trae-hook (reads one Hook JSON from stdin)\n       vibeguard export-trae-session SESSION_ID (prints observed JSON)\n       vibeguard plan --resolution ID --profile FILE --provider ID [--model ID]\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard run-demo-plan --plan PLAN_HASH --variant correct|faulty|unavailable [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
     console.log("Manual acceptance: vibeguard capture-codex THREAD_ID [--scope final|checkpoint] [--codex-bin PATH]\n                   vibeguard register-task --task FILE [--scope final|checkpoint] [--demo-plan HASH --demo-variant correct|faulty|unavailable]\n                   vibeguard verify-task TASK_REF [--force-rerun] [--provider ID] [--model ID]\n                   vibeguard verification RUN_ID\nMCP stdio server: node dist/mcp-entry.js [--data-dir PATH] [--provider ID] [--model ID] [--codex-thread ID --codex-bin PATH]");
+    return;
+  }
+  if (command === "project-runtime" || command === "runtime-report") {
+    if (!args[0]) throw new Error(`${command} requires ${command === "project-runtime" ? "PROJECT_REF" : "RUN_ID"}`);
+    if (command === "runtime-report") console.log(JSON.stringify(await readRuntimeReport(dataDir, args[0]), null, 2));
+    else {
+      const controller = new AbortController();
+      const cancel = () => controller.abort(); process.once("SIGINT", cancel); process.once("SIGTERM", cancel);
+      try {
+        const report = await checkExternalProjectRuntime(dataDir, args[0], { signal: controller.signal });
+        console.log(JSON.stringify(report, null, 2));
+        process.exitCode = report.status === "ready" ? 0 : 2;
+      } finally { process.removeListener("SIGINT", cancel); process.removeListener("SIGTERM", cancel); }
+    }
     return;
   }
   if (command === "project-prepare") {

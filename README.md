@@ -92,7 +92,7 @@ node dist/cli.js evidence <证据ID>
 
 `verify` 的退出码：0 表示本轮**门槛检查范围**已验证，1 表示该范围失败，2 表示无法验证，3 表示参数或内部错误。完整优惠券任务还包含“每张券只能使用一次”，当前没有检查，因此正确版本的**整个任务**仍为无法验证。运行记录会显示具体范围。
 
-需要 Node.js 24 与 pnpm。Docker Desktop 已可用，但 M1 只运行本项目自己编写的受控样例，尚未把外部代码放入容器。架构和后续阶段见 [文档索引](docs/00-README.md) 与 [实施状态](docs/implementation-status.md)。
+需要 Node.js 24 与 pnpm。M1 运行受控样例；D2 另提供已准备项目副本的 Docker 启动检查，并已做真实容器实测，尚未接通外部任务的动态功能验收。架构和后续阶段见 [文档索引](docs/00-README.md) 与 [实施状态](docs/implementation-status.md)。
 
 ## 导入完整对话与整理要求（M2 开发中）
 
@@ -100,7 +100,20 @@ node dist/cli.js evidence <证据ID>
 
 已实现独立的 `external_project` 准备类型：项目运行配置、实际文件副本、确认要求与宿主采集绑定。`project-prepare --profile FILE --review REVIEW_REF --current-task FRESH_TASK_REF` 登记项目，`project-inspect PROJECT_REF` 复核副本；二者均通过 `node dist/cli.js` 调用。后续使用输出的任务编号调用原有 CLI/MCP。准备结果始终为“尚未执行 / 无法验证”，不是通用动态验收已完成。
 
-副本默认排除依赖、工具数据及常见本地密钥文件名，保留排除账目；证据目录必须在项目目录外。源码变更需新副本。Docker 启动、外部动态规划及 `.exe` 尚待后续阶段。配置及边界见[外部项目准备说明](docs/18-external-project-preparation.md)。
+副本默认排除依赖、工具数据及常见本地密钥文件名，保留排除账目；证据目录必须在项目目录外。源码变更需新副本。配置及边界见[外部项目准备说明](docs/18-external-project-preparation.md)。
+
+### Docker 运行检查（D2）
+
+已经准备的项目可以显式启动检查。当前限本地缓存的官方 Node 24 镜像和无需安装依赖的直接 JavaScript 入口；不提供外网、宿主端口或外部数据库。
+
+```powershell
+# 首次主动准备基础镜像；运行器不会自动下载
+docker pull node:24-bookworm-slim
+node dist/cli.js project-runtime PROJECT_REF
+node dist/cli.js runtime-report RUN_ID
+```
+
+以上命令支持 `--data-dir PATH`。记录实际就绪请求、日志、退出和清理；正常就绪仍是任务“无法验证”，不能证明功能完成。MCP 外部项目查询仍为准备状态，动态功能验收与 `.exe` 尚待后续阶段。详见 [Docker 运行说明](docs/19-docker-runtime.md)。
 
 `intake` 接受一份 JSON 对话文件，保存消息原文、顺序、任务边界、来源和内容摘要。示例格式见 `fixtures/conversations/coupon-complete.json`。`transcriptCoverage.level: complete` 是提交者对**明确任务边界内**材料的声明；它本身不能证明宿主没有漏发消息。程序还会检查首尾 ID、序号缺口和摘要来源。
 
