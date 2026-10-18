@@ -1,0 +1,141 @@
+[
+  {
+    "id": "archive-retention-preserve-format",
+    "requirements": [
+      { "text": "导出文件保留7天，导出格式为CSV，编码使用UTF-8并带BOM。" },
+      { "text": "导出文件中的时间统一使用北京时间。" }
+    ],
+    "answer": "导出格式和编码都照旧，文件留一个月太含糊，明确改成保留30天；时间那条不用动。",
+    "expected": {
+      "status": "awaiting_review",
+      "actions": [{ "action": "replace", "target": "R1" }],
+      "unchanged": ["R2"],
+      "activeCount": 2,
+      "semanticChecks": [
+        { "displayId": "R1", "includes": ["30天", "CSV", "UTF-8", "BOM"] }
+      ],
+      "notes": "人工判据：只把保留期从7天改为30天；CSV、UTF-8和BOM必须完整保留，不能误改成自然月。北京时间要求保持不变。本次有修订，必须先展示新版而非直接确认。includes只是辅助检查，空格、大小写、数字写法等同义表达不算错误。"
+    }
+  },
+  {
+    "id": "stock-scanner-exclude-and-approve-rest",
+    "requirements": [
+      { "text": "扫描商品条码后显示对应的商品名称。" },
+      { "text": "商品条码不存在时展示未找到商品的提示。" },
+      { "text": "扫描结果离线保存在设备上，联网后自动上传。" }
+    ],
+    "answer": "离线保存和补传先从这次拿掉，扫码显示商品、查不到时给提示这两项理解准确，可以照着检查。",
+    "expected": {
+      "status": "awaiting_review",
+      "actions": [{ "action": "cancel", "target": "R3" }],
+      "unchanged": ["R1", "R2"],
+      "activeCount": 2,
+      "semanticChecks": [],
+      "notes": "人工判据：排除整条R3，前两条保持原意。用户同时认可其余要求，但取消改变了清单版本，仍必须awaiting_review。不得只接受确认而丢掉排除，也不得把离线能力永久删除得无法追溯。"
+    }
+  },
+  {
+    "id": "document-search-add-and-natural-approval",
+    "requirements": [
+      { "text": "归档页面可以按文件名搜索扫描件。" },
+      { "text": "搜索不到扫描件时显示空结果说明。" }
+    ],
+    "answer": "前面写得没问题。再把搜到的扫描件支持下载原文件也算上，这样清单就齐了，开始吧。",
+    "expected": {
+      "status": "awaiting_review",
+      "actions": [{ "action": "add" }],
+      "unchanged": ["R1", "R2"],
+      "activeCount": 3,
+      "semanticChecks": [
+        { "displayId": "R3", "includes": ["扫描件", "下载", "原文件"] }
+      ],
+      "notes": "人工判据：只新增搜索结果中的扫描件原文件下载，不附加下载次数、权限、水印或压缩格式等用户未提条件。虽然包含自然认可和开始意图，新版本尚未展示，必须再次审查。原文件可表述为原始文件；不是强制逐词匹配。"
+    }
+  },
+  {
+    "id": "theatre-reminder-merge-preserve-content",
+    "requirements": [
+      { "text": "演出开始前24小时向购票人发送邮件提醒。" },
+      { "text": "提醒邮件包含座位号和入场入口信息。" },
+      { "text": "检票成功后将该张票标记为已入场。" }
+    ],
+    "answer": "开演提醒和邮件里写座位、入口本来就是一件事，以第一条为主合在一起，24小时前这个时间别改；检票标记那项单独留着。",
+    "expected": {
+      "status": "awaiting_review",
+      "actions": [{ "action": "merge" }],
+      "unchanged": ["R3"],
+      "activeCount": 2,
+      "semanticChecks": [
+        { "displayId": "R1", "includes": ["24小时", "邮件", "座位", "入口"] }
+      ],
+      "notes": "人工判据：R1承接R1和R2的全部含义，即开演前24小时、收件人为购票人、邮件包括座位号和入口；R2取消但保留历史，R3不变。首选merge targets=[R1,R2]。若模型用replace R1加cancel R2取得完全等价结果，人工可判语义通过，但应单独记录动作形式与首选oracle不同，不能静默修改预设答案。"
+    }
+  },
+  {
+    "id": "meeting-room-question-is-background",
+    "requirements": [
+      { "text": "会议室预订成功后显示预订编号。" },
+      { "text": "同一会议室的时间发生冲突时拒绝新的预订。" }
+    ],
+    "questions": [
+      { "quote": "会议室的投影仪型号要不要显示？", "reason": "尚未明确这是背景讨论还是本次需要交付的功能。" }
+    ],
+    "answer": "投影仪型号只是我介绍会议室时顺口问的背景，不是要你做显示功能，这次不用验它。",
+    "expected": {
+      "status": "awaiting_review",
+      "actions": [{ "action": "clarify", "target": "Q1" }],
+      "unchanged": ["R1", "R2"],
+      "activeCount": 2,
+      "semanticChecks": [],
+      "notes": "人工判据：唯一待处理Q1被归为context且resolved=true；不能新增或取消任何R。此次是对未决问题的澄清，还没有明确认可整份清单，因此不能confirmed。这里只排除型号显示要求，不得把会议室预订本身排除。"
+    }
+  },
+  {
+    "id": "upload-limits-ambiguous-reference",
+    "requirements": [
+      { "text": "单个上传文件不能超过10MB。" },
+      { "text": "每批上传最多包含5个文件。" }
+    ],
+    "answer": "那个限制放宽一点，别卡这么严。",
+    "expected": {
+      "status": "needs_clarification",
+      "actions": [],
+      "unchanged": ["R1", "R2"],
+      "activeCount": 2,
+      "semanticChecks": [],
+      "notes": "人工判据：无法唯一确定是大小限制还是批次数量，且没有新阈值；不得猜测替换或取消任何要求。应保留两条原要求并新增待澄清问题，询问要改哪项以及希望放宽到什么程度。actions为空指没有业务修订操作，不禁止程序记录unknown澄清记录。"
+    }
+  },
+  {
+    "id": "photo-watermark-explain-and-pause",
+    "requirements": [
+      { "text": "导出的照片水印包含拍摄日期。" },
+      { "text": "照片水印放在左下角，字号为12像素。" }
+    ],
+    "answer": "先暂停验收，清单保持现在这样。我想先听你解释，为什么字号也要作为一条要求？我还没有确认开始。",
+    "expected": {
+      "status": "awaiting_review",
+      "actions": [],
+      "unchanged": ["R1", "R2"],
+      "activeCount": 2,
+      "semanticChecks": [],
+      "notes": "人工判据：暂停执行和要求解释都不是认可，不得生成confirmation。用户明确要求清单保持，因此不能把暂停理解为cancel R1/R2，也不应把询问原因转成新增产品功能。按现有政策可把全部解释/暂停文字归context，保留awaiting_review；若模型提出确有依据的澄清问题，可人工单列保守结果，但不能冒充与预设状态完全一致。"
+    }
+  },
+  {
+    "id": "weekly-report-natural-confirmation",
+    "requirements": [
+      { "text": "周报统计范围从每周一零点到周日结束。" },
+      { "text": "周报中的金额显示为两位小数。" }
+    ],
+    "answer": "这两项把我的意思说清楚了，范围和金额的写法都对，就按你刚展示的这份清单验收。",
+    "expected": {
+      "status": "confirmed",
+      "actions": [],
+      "unchanged": ["R1", "R2"],
+      "activeCount": 2,
+      "semanticChecks": [],
+      "notes": "人工判据：明确认可已经展示的当前版本，未提出修改、补充或保留意见；应提供逐字来自本条回复的confirmation来源，清单本身不变。确认仅表示认可验收要求，不得生成任何已验证、测试通过或任务完成结论。"
+    }
+  }
+]

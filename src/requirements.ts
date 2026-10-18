@@ -42,6 +42,9 @@ export interface GatewayInput {
   messages: ConversationMessage[];
   knownRequirements: RequirementRevision[];
   validationFeedback?: string;
+  selectedScope?: IntakeResult["conversation"]["selectedScope"];
+  materialGaps?: IntakeResult["conversation"]["materialGaps"];
+  taskFocus?: { title: string; workUserMessages: { sequence: number; text: string }[]; workMessages: { sequence: number; role: ConversationMessage["role"]; text: string }[] };
 }
 
 export interface GatewayOutput {
@@ -49,6 +52,7 @@ export interface GatewayOutput {
   model: string;
   promptHash?: string;
   usage?: { inputTokens: number; outputTokens: number; estimatedCostUsd?: number };
+  formatNormalizations?: { path: string; from: string; to: string }[];
 }
 
 export interface RequirementGateway {
@@ -57,7 +61,7 @@ export interface RequirementGateway {
   propose(input: GatewayInput): Promise<GatewayOutput>;
 }
 
-export const REQUIREMENT_POLICY_VERSION = "intent-unit-coverage-v1";
+export const REQUIREMENT_POLICY_VERSION = "intent-unit-coverage-event-order-v2";
 
 export interface Resolution {
   schemaVersion: 1;
@@ -71,13 +75,18 @@ export interface Resolution {
   dispositions: Proposal["dispositions"];
   /** Absent in historical records; completeness is a structural check, not semantic proof. */
   interpretedUnits?: InterpretedUnit[];
-  processing: { chunk: number; messageIds: string[]; status: "processed" | "failed"; model?: string; promptHash?: string; usage?: GatewayOutput["usage"]; rejectedClaims?: { messageId: string; requirementId: string; reason: string }[]; error?: string }[];
+  processing: { chunk: number; messageIds: string[]; status: "processed" | "failed"; model?: string; promptHash?: string; usage?: GatewayOutput["usage"]; normalizations?: { kind: "event_message_order"; before: string[]; after: string[] }[]; formatNormalizations?: GatewayOutput["formatNormalizations"]; rejectedClaims?: { messageId: string; requirementId: string; reason: string }[]; error?: string }[];
   unprocessedUserMessageIds: string[];
   resolutionComplete: boolean;
+  textCoverage?: { visibleUserMessages: number; processedUserMessages: number; classifiedUnits: number; unresolvedUnits: number; allVisibleTextAccounted: boolean; meaning: string };
 }
 
 export async function resolveRequirements(intake: IntakeResult, gateway: RequirementGateway, maxChunkChars = 8000): Promise<Resolution> {
   const conversation = intake.conversation;
+  const workIds = new Set(conversation.selectedScope?.workMessageIds);
+  const taskFocus = conversation.selectedScope ? { title: conversation.selectedScope.title,
+    workUserMessages: conversation.messages.filter(message => message.role === "user" && workIds.has(message.id)).map(message => ({ sequence: message.sequence, text: message.text })),
+    workMessages: conversation.messages.filter(message => workIds.has(message.id)).map(message => ({ sequence: message.sequence, role: message.role, text: message.text })) } : undefined;
   const result: Resolution = {
     schemaVersion: 1,
     resolutionId: randomUUID(),
@@ -108,12 +117,16 @@ export async function resolveRequirements(intake: IntakeResult, gateway: Require
       let applied: ReturnType<typeof applyProposal> | undefined;
       let validationFeedback: string | undefined;
       let accumulatedUsage: GatewayOutput["usage"];
+      let normalizations: Resolution["processing"][number]["normalizations"];
       for (let attempt = 0; attempt < 2; attempt++) {
         output = await gateway.propose({
           taskId: conversation.taskId,
           messages,
           knownRequirements: latestRequirements(result.revisions),
           validationFeedback,
+          selectedScope: conversation.selectedScope,
+          materialGaps: conversation.materialGaps,
+          taskFocus,
         });
         if (output.usage) accumulatedUsage = {
           inputTokens: (accumulatedUsage?.inputTokens ?? 0) + output.usage.inputTokens,
@@ -121,7 +134,10 @@ export async function resolveRequirements(intake: IntakeResult, gateway: Require
           estimatedCostUsd: (accumulatedUsage?.estimatedCostUsd ?? 0) + (output.usage.estimatedCostUsd ?? 0),
         };
         try {
-          applied = applyProposal(result.revisions, messages, ProposalSchema.parse(output.proposal));
+          const proposal = ProposalSchema.parse(output.proposal);
+          const ordered = orderRequirementEvents(messages, proposal);
+          normalizations = ordered.normalizations;
+          applied = applyProposal(result.revisions, messages, ordered.proposal);
           break;
         } catch (error) {
           validationFeedback = error instanceof Error ? error.message : String(error);
@@ -132,7 +148,7 @@ export async function resolveRequirements(intake: IntakeResult, gateway: Require
       result.revisions = applied.revisions;
       result.dispositions.push(...applied.dispositions);
       result.interpretedUnits!.push(...applied.interpretedUnits);
-      result.processing.push({ chunk: index + 1, messageIds: messages.map(message => message.id), status: "processed", model: output.model, promptHash: output.promptHash, usage: accumulatedUsage, rejectedClaims: applied.rejectedClaims });
+      result.processing.push({ chunk: index + 1, messageIds: messages.map(message => message.id), status: "processed", model: output.model, promptHash: output.promptHash, usage: accumulatedUsage, normalizations, formatNormalizations: output.formatNormalizations, rejectedClaims: applied.rejectedClaims });
       const processed = new Set(applied.dispositions.map(item => item.messageId));
       result.unprocessedUserMessageIds = result.unprocessedUserMessageIds.filter(id => !processed.has(id));
     } catch (error) {
@@ -148,7 +164,21 @@ export async function resolveRequirements(intake: IntakeResult, gateway: Require
   if (result.dispositions.some(item => item.kind === "unresolved")) result.coverageIssues.push("存在尚未解释的用户消息");
   if (result.interpretedUnits?.some(unit => unit.kind === "unresolved")) result.coverageIssues.push("存在尚未解释的用户原文片段");
   result.resolutionComplete = result.coverageIssues.length === 0;
+  const unresolvedUnits = result.interpretedUnits!.filter(unit => unit.kind === "unresolved").length;
+  result.textCoverage = { visibleUserMessages: intake.userMessageIds.length, processedUserMessages: intake.userMessageIds.length - result.unprocessedUserMessageIds.length,
+    classifiedUnits: result.interpretedUnits!.length, unresolvedUnits,
+    allVisibleTextAccounted: result.unprocessedUserMessageIds.length === 0 && result.processing.every(item => item.status === "processed") && !result.dispositions.some(item => item.kind === "unresolved") && unresolvedUnits === 0,
+    meaning: "只统计可见文字的处理去向；不表示图片已理解、语义无漏项、材料完整或任务通过。" };
   return result;
+}
+
+/** Chronology comes from source messages; ordering within one message is unchanged. */
+export function orderRequirementEvents(messages: ConversationMessage[], proposal: Proposal): { proposal: Proposal; normalizations: NonNullable<Resolution["processing"][number]["normalizations"]> } {
+  const sequences = new Map(messages.map(message => [message.id, message.sequence]));
+  const events = proposal.events.map((event, index) => ({ event, index })).sort((left, right) =>
+    (sequences.get(left.event.source.messageId) ?? Number.MAX_SAFE_INTEGER) - (sequences.get(right.event.source.messageId) ?? Number.MAX_SAFE_INTEGER) || left.index - right.index).map(item => item.event);
+  const changed = events.some((event, index) => event !== proposal.events[index]);
+  return { proposal: { ...proposal, events }, normalizations: changed ? [{ kind: "event_message_order", before: proposal.events.map(event => event.source.messageId), after: events.map(event => event.source.messageId) }] : [] };
 }
 
 export function currentRequirements(revisions: RequirementRevision[]): RequirementRevision[] {

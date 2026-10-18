@@ -1,0 +1,41 @@
+[
+  {
+    "id": "greenhouse-alert-and-daily-summary-changes",
+    "requirements": [
+      { "text": "温室温度超过32摄氏度并持续5分钟后，向管理员发送短信告警。" },
+      { "text": "每天上午8点向管理员发送前一日湿度汇总。" },
+      { "text": "传感器掉线后记录事件，并在事件中保留设备编号。" }
+    ],
+    "answer": "高温告警别等那么久，持续两分钟就发，超过32度和发给管理员的短信都照旧。湿度日报挪到上午九点，统计前一天这点不变。掉线记录还是你列的那个意思，不用动。",
+    "expected": {
+      "status": "awaiting_review",
+      "actions": [
+        { "action": "replace", "target": "R1" },
+        { "action": "replace", "target": "R2" }
+      ],
+      "unchanged": ["R3"],
+      "activeCount": 3,
+      "semanticChecks": [
+        { "displayId": "R1", "includes": ["32", "2分钟", "管理员", "短信"] },
+        { "displayId": "R2", "includes": ["上午9点", "前一日", "湿度", "管理员"] }
+      ],
+      "notes": "首次8例之后新增的补充样本，不与同组开发复测合并宣传为大规模盲评。人工判据：同时正确定位R1/R2；R1仅持续时长从5分钟改2分钟，必须保留严格超过32摄氏度、短信及收件人；R2仅发送时间从8点改9点，仍每日发送前一日湿度给管理员；R3原样。两分钟/2分钟、九点/9点、前一天/前一日都是等义写法，不按includes机械扣分。修改后仍需展示新版，不confirmed。"
+    }
+  },
+  {
+    "id": "audio-transition-explanation-withheld-approval",
+    "requirements": [
+      { "text": "播放列表按照曲目加入的先后顺序排列。" },
+      { "text": "切换曲目时采用2秒淡出淡入效果。" }
+    ],
+    "answer": "排序那项我没意见，但两秒的过渡我还在考虑。你先解释一下为什么选两秒，清单先别改，也别把这句话当成我确认了整份清单。",
+    "expected": {
+      "status": "awaiting_review",
+      "actions": [],
+      "unchanged": ["R1", "R2"],
+      "activeCount": 2,
+      "semanticChecks": [],
+      "notes": "人工判据：仅认可排序不等于确认整份清单；对过渡时长保留意见并要求解释，且明确清单先别改，因此不得取消R2、猜一个新时长、添加解释功能或生成confirmation。应以context保留awaiting_review。如额外创建澄清Q造成needs_clarification，记保守交互偏差而非完全matched；任何confirmed都属于错误确认。"
+    }
+  }
+]

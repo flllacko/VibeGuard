@@ -173,6 +173,9 @@ test("MCP file execution persists evidence across restart and changed delivery i
     const passed = await completed(client, request.runId);
     assert.equal(passed.verdict, "VERIFIED");
     assert.equal(passed.kind, "planned-file-run");
+    assert.equal(passed.acceptancePlan.requirements[0].sourceRefs[0].quote, quote);
+    assert.equal(passed.acceptancePlan.status, "plan_definition");
+    assert.equal("verdict" in passed.acceptancePlan, false);
     const evidenceId = passed.requirements[0].evidenceIds.at(-1);
     const firstEvidence = payload(await client.callTool({ name: "read_evidence", arguments: { runId: request.runId, evidenceId, limit: 8000 } }));
     assert.equal(JSON.parse(firstEvidence.text).collector, "vibeguard-file");

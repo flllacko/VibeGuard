@@ -13,6 +13,8 @@ const ADOPTION = /(?:同意|接受|采纳|认可|采用|决定|定了|就这样|
 export function attributedExternalRanges(message: ConversationMessage): TextRange[] {
   if (message.role !== "user") return [];
   const text = message.text;
+  const questionRanges = hostQuestionRanges(text);
+  if (questionRanges) return questionRanges;
   const annotationRanges = responseAnnotationQuoteRanges(text);
   if (annotationRanges) return annotationRanges;
   for (let open = text.indexOf("“"); open >= 0; open = text.indexOf("“", open + 1)) {
@@ -25,27 +27,40 @@ export function attributedExternalRanges(message: ConversationMessage): TextRang
   return [];
 }
 
+/** Host question text is quoted Assistant context; only the answer is the user's decision. */
+function hostQuestionRanges(text: string): TextRange[] | undefined {
+  const tag = "<send_user_message_question_reply>";
+  const start = text.indexOf(tag);
+  if (start < 0) return undefined;
+  const end = text.indexOf("</send_user_message_question_reply>", start + tag.length);
+  if (end < 0) return [{ start, end: text.length }];
+  return jsonStringValueRanges(text, "question", start + tag.length, end);
+}
+
+function jsonStringValueRanges(text: string, key: "text" | "question", blockStart: number, blockEnd: number): TextRange[] {
+  const ranges: TextRange[] = [];
+  const matcher = new RegExp(`"${key}"\\s*:\\s*"`, "g");
+  for (const match of text.slice(blockStart, blockEnd).matchAll(matcher)) {
+    const valueStart = blockStart + match.index + match[0].length;
+    let valueEnd = valueStart, escaped = false;
+    for (; valueEnd < blockEnd; valueEnd++) {
+      const char = text[valueEnd];
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') break;
+    }
+    if (valueEnd < blockEnd) ranges.push({ start: valueStart, end: valueEnd });
+  }
+  return ranges;
+}
+
 function responseAnnotationQuoteRanges(text: string): TextRange[] | undefined {
   const tag = "<response-annotations>";
   const start = text.indexOf(tag);
   if (start < 0) return undefined;
   const end = text.indexOf("</response-annotations>", start + tag.length);
   if (end < 0) return [{ start, end: text.length }];
-  const ranges: TextRange[] = [];
-  const block = text.slice(start + tag.length, end);
-  const matcher = /"text"\s*:\s*"/g;
-  for (const match of block.matchAll(matcher)) {
-    const valueStart = start + tag.length + match.index + match[0].length;
-    let valueEnd = valueStart;
-    let escaped = false;
-    for (; valueEnd < end; valueEnd++) {
-      const char = text[valueEnd];
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') break;
-    }
-    if (valueEnd < end) ranges.push({ start: valueStart, end: valueEnd });
-  }
+  const ranges = jsonStringValueRanges(text, "text", start + tag.length, end);
   return ranges.length ? ranges : [{ start: start + tag.length, end }];
 }
 

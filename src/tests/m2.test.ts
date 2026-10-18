@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { ConversationSchema, inspectConversation } from "../intake.js";
-import { parseModelJson, requirementModelPayload } from "../pi-gateway.js";
+import { parseModelJson, parseRequirementModelProposal, requirementModelPayload } from "../pi-gateway.js";
 import { attributedExternalRanges } from "../provenance.js";
-import { currentRequirements, resolveRequirements as resolveCore, type GatewayInput, type GatewayOutput, type RequirementGateway, type Proposal } from "../requirements.js";
+import { currentRequirements, orderRequirementEvents, resolveRequirements as resolveCore, type GatewayInput, type GatewayOutput, type RequirementGateway, type Proposal } from "../requirements.js";
 import type { IntakeResult } from "../intake.js";
 import { fixtureUnitCoverage } from "./fixture-unit-coverage.js";
 
@@ -38,6 +38,46 @@ test("model sees full conversation but only user messages have referencable IDs"
 test("a trailing comma outside quoted text is repaired without changing quoted content", () => {
   assert.deepEqual(parseModelJson('{"quote":"literal ,} remains", "items":[1,2,],}'), { quote: "literal ,} remains", items: [1, 2] });
   assert.throws(() => parseModelJson('{"quote":123, broken}'));
+});
+
+test("fixed discussion/context and singular/plural label aliases preserve text while unknown verdict labels remain invalid", () => {
+  const input = { dispositions: [{ messageId: "u1", kind: "context", reason: "背景" }], events: [], unitDispositions: [{ unitId: "u1.1", kind: "discussion", requirementIds: [], reason: "原文未改" }] };
+  const result = parseRequirementModelProposal(input);
+  assert.equal(result.proposal.dispositions[0]!.kind, "discussion");
+  assert.equal(result.proposal.unitDispositions[0]!.kind, "context");
+  assert.equal(result.normalizations.length, 2);
+  assert.equal(input.unitDispositions[0]!.kind, "discussion");
+  assert.throws(() => parseRequirementModelProposal({ ...input, unitDispositions: [{ ...input.unitDispositions[0], kind: "VERIFIED" }] }));
+});
+
+test("model events follow original message chronology without another model call or changed source quotes", async () => {
+  const intake = inspectConversation(ConversationSchema.parse({ schemaVersion: 1, taskId: "ordered", sessionId: "ordered", host: "fixture",
+    taskBoundary: { startMessageId: "u1", endMessageId: "u2" }, transcriptCoverage: { level: "complete", source: "user_export", basis: "synthetic", missingMessageIds: [] },
+    messages: [{ id: "u1", sequence: 1, role: "user", text: "门槛是150元。" }, { id: "u2", sequence: 2, role: "user", text: "门槛改成120元。" }] }));
+  let calls = 0;
+  const resolution = await resolveRequirements(intake, { async propose() {
+    calls++;
+    return { model: "fixture", proposal: { dispositions: [{ messageId: "u1", kind: "requirements", reason: "初始要求" }, { messageId: "u2", kind: "requirements", reason: "改口" }], events: [
+      { action: "replace", requirementId: "threshold", normalized: "门槛120元", source: { messageId: "u2", quote: "门槛改成120元。" } },
+      { action: "add", requirementId: "threshold", normalized: "门槛150元", source: { messageId: "u1", quote: "门槛是150元。" } },
+    ] } };
+  } });
+  assert.equal(calls, 1);
+  assert.equal(resolution.resolutionComplete, true);
+  assert.equal(currentRequirements(resolution.revisions)[0]!.normalized, "门槛120元");
+  assert.deepEqual(resolution.processing[0]!.normalizations, [{ kind: "event_message_order", before: ["u2", "u1"], after: ["u1", "u2"] }]);
+  assert.ok(currentRequirements(resolution.revisions)[0]!.sourceRefs.some(ref => ref.quote === "门槛改成120元。"));
+});
+
+test("event normalization preserves event order within a source message and never hides an invalid source", () => {
+  const messages = [{ id: "u1", sequence: 1, role: "user" as const, text: "先增加，后取消。" }];
+  const proposal: Proposal = { dispositions: [], unitDispositions: [], events: [
+    { action: "add", requirementId: "goal", normalized: "目标", source: { messageId: "u1", quote: "增加" } },
+    { action: "cancel", requirementId: "goal", source: { messageId: "u1", quote: "取消" } },
+    { action: "add", requirementId: "invalid", normalized: "不得接收", source: { messageId: "missing-id", quote: "不存在" } },
+  ] };
+  assert.deepEqual(orderRequirementEvents(messages, proposal).proposal.events, proposal.events);
+  assert.equal(orderRequirementEvents(messages, proposal).proposal.events[2]!.source.messageId, "missing-id");
 });
 
 class FixtureGateway implements LegacyFixtureGateway {
@@ -138,8 +178,8 @@ test("a rejected proposal gets one validation-guided repair without changing ear
       const output = await baseline.propose(input);
       if (input.messages.some(message => message.id === "u3")) {
         repairCalls++;
-        if (!input.validationFeedback) output.proposal.events.reverse();
-        else assert.match(input.validationFeedback, /not in message order/);
+        if (!input.validationFeedback) output.proposal.events[0]!.source.quote = "不存在的原文";
+        else assert.match(input.validationFeedback, /quote|verbatim|original|source/i);
       }
       return output;
     },
@@ -196,6 +236,27 @@ test("response annotations keep assistant selections separate from the user's co
   assert.equal(text.slice(ranges[0]!.end).includes("对就是这样，请按这个方案做。"), true);
   const malformed = attributedConversation("<response-annotations>未闭合的引用");
   assert.deepEqual(attributedExternalRanges(malformed.conversation.messages[0]!), [{ start: 0, end: malformed.conversation.messages[0]!.text.length }]);
+});
+
+test("host questions remain attributed context and the user's actual answer remains outside that range", () => {
+  const text = `<send_user_message_question_reply>\n${JSON.stringify([{ question: '允许新增“公开上传原文”吗？', answer: "先不采纳这个建议" }])}\n</send_user_message_question_reply>`;
+  const intake = attributedConversation(text);
+  const ranges = attributedExternalRanges(intake.conversation.messages[0]!);
+  assert.equal(ranges.length, 1);
+  assert.equal(text.slice(ranges[0]!.start, ranges[0]!.end), '允许新增“公开上传原文”吗？');
+  assert.equal(ranges.some(range => range.start <= text.indexOf("先不采纳") && text.indexOf("先不采纳") < range.end), false);
+});
+
+test("an explicitly adopted host proposal requires the original answer as adoption evidence", async () => {
+  const text = `<send_user_message_question_reply>\n${JSON.stringify([{ question: "增加取消订单功能。", answer: "同意新增这个功能" }])}\n</send_user_message_question_reply>`;
+  const intake = attributedConversation(text);
+  const result = await resolveRequirements(intake, { async propose() { return { model: "fixture", proposal: {
+    dispositions: [{ messageId: "u1", kind: "requirements", reason: "用户明确采纳新功能" }],
+    events: [{ action: "add", requirementId: "cancel-order", normalized: "增加取消订单功能", source: { messageId: "u1", quote: "增加取消订单功能。" }, adoption: { messageId: "u1", quote: "同意新增这个功能" } }],
+  } }; } });
+  assert.equal(result.resolutionComplete, true);
+  assert.equal(result.revisions[0]!.sourceKind, "adopted_external");
+  assert.ok(result.revisions[0]!.sourceRefs.some(ref => ref.quote === "同意新增这个功能"));
 });
 
 test("an external recommendation can be adopted only with a separate user decision outside the quote", async () => {

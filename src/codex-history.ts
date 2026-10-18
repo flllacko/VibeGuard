@@ -105,8 +105,9 @@ export async function readCodexHistory(reader: CodexHistoryReader, threadId: str
   const initial = z.object({ thread: ThreadSchema }).passthrough().parse(await reader.readThread(threadId));
   if (initial.thread.id !== threadId) throw new Error("Codex returned a different thread");
   const initialUsers = initial.thread.turns.flatMap(turn => turn.items).filter(item => item.type === "userMessage");
-  const cutoff = initialUsers.at(-1)?.id;
-  if (!cutoff) throw new Error("Codex thread has no original user message");
+  let cutoff = initialUsers.at(-1)?.id;
+  const initialLatestTurnId = initial.thread.turns.at(-1)?.id;
+  if (!initialLatestTurnId) throw new Error("Codex thread has no known turn boundary");
   const pages: unknown[] = [];
   const turns: Turn[] = [];
   const seenTurns = new Set<string>();
@@ -129,10 +130,20 @@ export async function readCodexHistory(reader: CodexHistoryReader, threadId: str
   for (const turn of initial.thread.turns) {
     if (!seenTurns.has(turn.id)) throw new Error("A known Codex turn is missing from paginated history");
   }
+  // A host-dispatched tool event or an assistant-only continuation can be the
+  // latest turn. Find the original user before that pinned turn; never adopt a
+  // user message appended AFTER capture began or relabel tool data as a user.
+  const cutoffSelection = cutoff ? "user_in_initial_turn" : "user_before_initial_turn";
+  if (!cutoff) {
+    const boundary = turns.findIndex(turn => turn.id === initialLatestTurnId);
+    cutoff = turns.slice(0, boundary + 1).flatMap(turn => turn.items).findLast(item => item.type === "userMessage")?.id;
+  }
+  if (!cutoff) throw new Error("Codex thread has no original user message before the known turn boundary");
   const messages: Conversation["messages"] = [];
   const seenMessages = new Set<string>();
   let reachedCutoff = false;
   let nonTextUserParts = 0;
+  const unparsedUserContent: { messageId: string; count: number }[] = [];
   outer: for (const turn of turns) {
     for (const item of turn.items) {
       if (item.type !== "userMessage" && item.type !== "agentMessage") continue;
@@ -141,7 +152,9 @@ export async function readCodexHistory(reader: CodexHistoryReader, threadId: str
       let text: string;
       if (item.type === "userMessage") {
         const content = z.array(z.object({ type: z.string() }).passthrough()).parse(item.content);
-        nonTextUserParts += content.filter(part => part.type !== "text").length;
+        const count = content.filter(part => part.type !== "text").length;
+        nonTextUserParts += count;
+        if (count) unparsedUserContent.push({ messageId: item.id, count });
         text = content.filter(part => part.type === "text").map(part => z.string().parse(part.text)).join("\n");
       } else text = z.string().parse(item.text);
       messages.push({ id: item.id, sequence: messages.length + 1, role: item.type === "userMessage" ? "user" : "assistant", text });
@@ -156,15 +169,17 @@ export async function readCodexHistory(reader: CodexHistoryReader, threadId: str
     if (message.text !== expected) throw new Error("Original user text changed during capture");
   }
   const warnings = ["已读完宿主返回的历史页，但尚未确认具体业务任务的起止范围；本记录是会话材料快照，不代表任务已完成。"];
+  if (cutoffSelection === "user_before_initial_turn") warnings.push("最新已知轮次只有工具或助手事件，已向前定位原始用户消息；工具事件没有改标为用户要求。");
   if (nonTextUserParts) warnings.push(`存在 ${nonTextUserParts} 个非文字用户内容；原始响应已保留，尚未解析这些内容。`);
   const conversation = ConversationSchema.parse({
     schemaVersion: 1, taskId: `codex-history-${threadId}`, sessionId: threadId, host: "codex-app-server",
     taskBoundary: { startMessageId: messages[0]!.id, endMessageId: cutoff },
     transcriptCoverage: { level: "partial", source: "host_adapter", basis: warnings.join(" "), missingMessageIds: [] }, messages,
+    hostCapture: { allReturnedPagesRead: true, scopeOnlyGap: true, unparsedUserContent },
   });
   return {
     conversation,
-    receipt: { threadId, pageCount: pages.length, allPagesRead: true, turnCount: turns.length, userMessageCount: messages.filter(item => item.role === "user").length, assistantMessageCount: messages.filter(item => item.role === "assistant").length, cutoffUserMessageId: cutoff, taskScopeConfirmed: false, transcriptCoverage: "partial", warnings },
+    receipt: { threadId, pageCount: pages.length, allPagesRead: true, turnCount: turns.length, userMessageCount: messages.filter(item => item.role === "user").length, assistantMessageCount: messages.filter(item => item.role === "assistant").length, cutoffUserMessageId: cutoff, initialLatestTurnId, cutoffSelection, taskScopeConfirmed: false, transcriptCoverage: "partial", warnings },
     raw: { initial, pages },
   };
 }

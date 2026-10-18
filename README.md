@@ -4,7 +4,32 @@ VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证
 
 默认由用户说“用 VibeGuard 验收”后发起检查；自动验收作为后续可开启的模式，默认关闭。MCP 是 Agent 调用 VibeGuard 的工具入口，不会自动提供完整聊天记录，也不保证存在 `@VibeGuard` 入口。
 
-## 用户自己接入：先生成填写说明
+新增**长聊天范围确认原型**：新采集的 Codex 文字历史先提议本次阶段及相关前文，用户选择后重新采集真实确认，再整理要求。选择不补齐图片或缺页，也不代表功能通过。见 [范围选择与使用说明](docs/13-task-scope-and-confirmation.md)。
+
+已确认任务仅前文附件未解析时，可以先输出**可读文字候选**，保留图片、语义待定及执行证据缺口。真实 S1 已整理出 3 条候选并在原聊天读回，整体仍无法验证。见 [部分材料处理实测](docs/14-partial-material-requirements.md)。
+
+新增**原聊天要求审查**：清单展示原话与 R/Q 编号，用户可回复“第2条改成……”“取消第3条”“Q1作为背景”，修改后展示新版，再确认。修订和确认从新采集的原始用户回复核对，不接受 Agent 代填结论；图片等材料缺口继续保留。已完成本地及 MCP 跨进程测试，真实平台需重载后验证真人流程；确认后尚未接入外部项目自动执行。见 [要求审查与修订说明](docs/15-requirement-review.md)。
+
+修订入口现已接入**模型理解自然表达**，无需固定命令，例如“退款恢复那块这次先放下”。模型提出通用修订操作，程序核对真实原话、对象和版本，再展示新版；不逐个业务硬编码。复用现有模型配置，明确确认和历史读回不额外调用模型。已完成 DeepSeek Flash 小样本真实联调：保留首轮失败，修正后同组 8 例和新增 2 例符合预期，不能据此宣传一般准确率。见 [真实调用、问题与结果](docs/16-live-review-evaluation.md)。
+
+## 统一接入向导
+
+当前源码原型完成 `pnpm install`、`pnpm build` 后，Windows 可双击 **connect.cmd**，或运行：
+
+```powershell
+node dist/cli.js connect
+```
+
+选择 Codex 或 Claude Code → 查看改动 → 确认后合并 MCP 和对话采集配置 → 独立连接自检。平台要求的钩子信任仍需用户完成。已有配置会保留；重复安装不重复添加同一钩子。
+
+```powershell
+node dist/cli.js connect codex --dry-run
+node dist/cli.js doctor codex
+```
+
+自检分别显示配置、工具连接、当前对话采集、项目读取及证据读回；未经真实平台运行的项目显示待确认。**当前不是已发布安装包，Claude 应用内实测与其他平台自动配置尚未完成。**操作、数据读取与写入边界见 [接入向导说明](docs/11-connection-wizard-and-plan-view.md)。
+
+## 手动接入：生成填写说明
 
 Codex 的设置界面可以直接添加 MCP，**不要求手改 TOML**。当前采集器随同一个 VibeGuard 源码包提供；配置 MCP 和采集 Hook 后，Hook 会从宿主取得当前会话身份，在主动验收前独立读取原文、登记任务。用户不用每换聊天都填写编号。MCP 与 Hook 各配置一次，不能声称只加 MCP 就自然获得聊天历史。
 
@@ -17,7 +42,7 @@ node dist/cli.js setup claude-code
 
 `setup` **只显示适合本机的表单字段和配置片段，不修改平台配置**，不打印密钥。Codex 的非受管 Hook 还须用户在平台中审查并信任；其输入改写会允许该次验收工具调用。Claude 入口使用官方 SDK 本地读取，不调用 Anthropic API。完整操作与限制见 [用户接入说明](docs/09-user-mcp-setup.md)。
 
-本次 Codex 检查使用手工构造的 Hook 输入，实际读取本条会话的 42 条用户消息和 146 条助手消息，再进入实际 MCP 服务；尚未启用原聊天的宿主自动 Hook。Claude 通过 SDK 合成转录与 MCP 集成测试，尚未在 Claude 应用内实测。任务范围未确认、外部执行尚未接入，因此不能据此宣称真实业务任务已验收完成。
+2026-09-30 的早期检查使用手工构造的 Hook 输入。2026-10-14 已在两条真实 Codex 聊天直接调用 MCP，宿主 Hook 自动登记了各自原文，分别取得 49/19 条用户文字消息、185/53 条助手文字消息；身份、原文摘要和消息 ID 核对未串线。第二条首次暴露“最新轮次只有工具事件”的采集缺陷，修复并真实复测通过，见 [宿主实测记录](docs/12-live-codex-capture-test.md)。Claude 仍只有 SDK 合成转录与 MCP 测试；任务范围和非文字材料待处理，不能据此宣称真实业务任务全部完成。
 
 ## 主动验收与 MCP（M5 原型）
 
@@ -86,6 +111,8 @@ node dist/cli.js resolution <要求整理ID> --format json
 DeepSeek Flash 已复测两段真实 Codex 材料：技能安装拆成六项，“确认”归为授权；学校案例此前漏掉的“询问或引导用户”进入候选清单，但材料仍为 partial。一份新的**人工合成**导出任务通过真实 stdio MCP 整理，金额两位改三位、其余要求保留；没有执行证据，仍报告无法验证。见 [要求拆解复测](docs/intent-coverage-evaluation-2026-09-30.md)。若凭据、输出格式或材料有缺口，保存原因，不宣布完整整理或验收通过。
 
 MCP 默认只返回分段计数；`get_verification(includeReport: true)` 才附详细分段原话，减少普通工具调用的上下文体积。`resolution <ID>` 可查看完整拆解。整理提示词更新会改变复用键，旧整理不会被当成新版结果；**更新并构建源码后，已运行的 MCP 服务需要重载**。
+
+已有计划时，`node dist/cli.js plan-record <计划摘要>` 现在直接展示“用户原话 → 怎样算做到 → 执行检查 → 尚缺证据”的可读清单，`--format json` 保留原始格式。已绑定计划的 MCP 报告通过 `get_verification(includeReport: true)` 返回 `acceptancePlan`；清单不等于通过证明，也不记录人工审批。
 
 材料或整理仍有缺口时，终端会先显示原因，再把条目标为“已见材料的候选要求”，不会把它们直接称作最终当前要求。阶段指令的两份合成对照样例在 `fixtures/conversations/phase-start-after-docs.json` 与 `phase-discussion-continues.json`：真实 DeepSeek Flash 调用分别撤销了“先不写代码”和保留了该限制。它们不是宿主长对话准确性的证明。
 

@@ -37,7 +37,8 @@ test("shared verification service separates running/unknown/completed and never 
     const completed = await owner.wait(runId);
     assert.equal(completed.status, "completed");
     assert.equal(completed.verdict, "UNVERIFIABLE");
-    assert.equal(completed.gapStage, "execution");
+    assert.equal(completed.gapStage, "requirements_review");
+    assert.equal((completed.requirementReview as { status: string }).status, "awaiting_review");
     assert.deepEqual((completed.requirements as any[])[0].sourceRefs.map((item: { quote: string }) => item.quote), ["增加登录功能"]);
     assert.equal((completed.interpretationCoverage as { classifiedUnits: number }).classifiedUnits, 1);
     assert.equal(completed.interpretedUnits, undefined);

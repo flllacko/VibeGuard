@@ -21,8 +21,16 @@ import { registerTask } from "./task-registry.js";
 import { VerificationService } from "./verification-service.js";
 import { captureCodexTask } from "./codex-history.js";
 import { buildConnectionConfig } from "./connection-config.js";
-import { assertFilePlanMatchesProfile, fileProfileHash, readFileProfile } from "./file-profile.js";
+import { assertEvidenceOutsideRoots, assertFilePlanMatchesProfile, fileProfileHash, readFileProfile, readStoredFileProfile, saveFileProfile } from "./file-profile.js";
 import { PiFilePlanGateway } from "./pi-file-plan-gateway.js";
+import { buildAcceptancePlan, renderAcceptancePlan } from "./plan-review.js";
+import { runConnectionWizard } from "./connection-wizard.js";
+import { checkConnection } from "./connection-doctor.js";
+import { PiTaskScopeGateway } from "./pi-scope-gateway.js";
+import { readScopeProposal, readTaskIntake, scopeReview } from "./task-scope.js";
+import { readTask } from "./task-registry.js";
+import { confirmedRequirementSnapshot, readRequirementReview, requirementReviewView } from "./requirement-review.js";
+import { PiReviewReplyGateway } from "./pi-review-reply-gateway.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -37,6 +45,20 @@ if (dataFlag >= 0) {
 }
 
 async function main(): Promise<void> {
+  if (command === "connect" || command === "doctor") {
+    const host = args[0]?.startsWith("--") ? undefined : args[0];
+    const options = { dataDir, homeDir: option(args, "--home-dir"), codexBin: option(args, "--codex-bin") };
+    if (command === "connect") {
+      await runConnectionWizard(host, { ...options, yes: args.includes("--yes"), dryRun: args.includes("--dry-run"), json: outputFormat(args) === "json" });
+    } else {
+      if (host !== "codex" && host !== "claude-code") throw new Error("doctor requires codex or claude-code");
+      const result = await checkConnection(host, options);
+      if (outputFormat(args) === "json") console.log(JSON.stringify(result, null, 2));
+      else for (const check of result.checks) console.log(`${{ passed: "✅", pending: "⚠", failed: "❌" }[check.status]} ${check.name}：${check.detail}`);
+      if (result.status === "needs_fix") process.exitCode = 2;
+    }
+    return;
+  }
   if (command === "setup") {
     const host = args[0];
     if (host !== "codex" && host !== "claude-code") throw new Error("setup currently supports codex or claude-code");
@@ -57,6 +79,9 @@ async function main(): Promise<void> {
   if (!command || command === "help") {
     console.log("Read-only files: vibeguard file-plan --resolution ID --profile FILE [--provider ID]\n                vibeguard register-task --task FILE --file-plan HASH --file-profile FILE\n                vibeguard verify-task TASK_REF");
     console.log("User setup (prints configuration only): vibeguard setup codex|claude-code [--format json] [--codex-bin PATH]");
+    console.log("Connection wizard: vibeguard connect [codex|claude-code] [--dry-run | --yes]\n                   vibeguard doctor codex|claude-code\nNon-interactive connect previews only unless --yes is explicitly supplied.");
+    console.log("Task scope: vibeguard scope-review PROPOSAL_REF\n            vibeguard verify-task FRESH_TASK_REF --scope-proposal PROPOSAL_REF --candidate S1\nRange selection requires the actual user reply in a fresh host capture; command flags cannot approve it.");
+    console.log("Requirements review: vibeguard requirement-review REVIEW_REF [--format json]\n                     vibeguard verify-task FRESH_TASK_REF --review REVIEW_REF\n                     vibeguard confirmed-requirements REVIEW_REF\nCorrections are read from the newly captured original user reply; --review cannot approve on its own.");
     console.log("Usage: vibeguard providers\n       vibeguard intake --task FILE [--format text|json]\n       vibeguard resolve --task FILE --provider ID [--model ID] [--format text|json]\n       vibeguard resolution RESOLUTION_ID [--format text|json]\n       vibeguard capture-trae-hook (reads one Hook JSON from stdin)\n       vibeguard export-trae-session SESSION_ID (prints observed JSON)\n       vibeguard plan --resolution ID --profile FILE --provider ID [--model ID]\n       vibeguard plan-record PLAN_HASH [--format text|json]\n       vibeguard run-demo-plan --plan PLAN_HASH --variant correct|faulty|unavailable [--format text|json]\n       vibeguard demo-plan --variant correct|faulty|unavailable [--format text|json]\n       vibeguard planned-report RUN_ID [--format text|json]\n       vibeguard verify --variant correct|faulty|unavailable [--format text|json]\n       vibeguard report RUN_ID [--format text|json]\n       vibeguard evidence EVIDENCE_ID\nAll commands accept [--data-dir PATH].");
     console.log("Manual acceptance: vibeguard capture-codex THREAD_ID [--scope final|checkpoint] [--codex-bin PATH]\n                   vibeguard register-task --task FILE [--scope final|checkpoint] [--demo-plan HASH --demo-variant correct|faulty|unavailable]\n                   vibeguard verify-task TASK_REF [--force-rerun] [--provider ID] [--model ID]\n                   vibeguard verification RUN_ID\nMCP stdio server: node dist/mcp-entry.js [--data-dir PATH] [--provider ID] [--model ID] [--codex-thread ID --codex-bin PATH]");
     return;
@@ -87,11 +112,31 @@ async function main(): Promise<void> {
   if (command === "verify-task" || command === "verification") {
     if (!args[0]) throw new Error(`Missing ${command === "verify-task" ? "TASK_REF" : "RUN_ID"}`);
     const model = selectModel(option(args, "--provider") ?? "deepseek", option(args, "--model"));
-    const service = new VerificationService(dataDir, new PiRequirementGateway(model.piProvider, model.modelId), `${model.piProvider}/${model.modelId}`);
-    const result = command === "verify-task" ? await service.request(args[0], args.includes("--force-rerun")) : await service.get(args[0]);
+    const service = new VerificationService(dataDir, new PiRequirementGateway(model.piProvider, model.modelId, dataDir), `${model.piProvider}/${model.modelId}`, new PiTaskScopeGateway(model.piProvider, model.modelId), new PiReviewReplyGateway(model.piProvider, model.modelId, dataDir));
+    const proposalRef = option(args, "--scope-proposal"), candidateId = option(args, "--candidate");
+    const reviewRef = option(args, "--review");
+    if (Boolean(proposalRef) !== Boolean(candidateId)) throw new Error("--scope-proposal and --candidate must be supplied together");
+    if (reviewRef && proposalRef) throw new Error("--review 与 --scope-proposal 不能同时使用");
+    const result = command === "verify-task" ? await service.request(args[0], args.includes("--force-rerun"), proposalRef && candidateId ? { proposalRef, candidateId } : undefined, reviewRef ? { reviewRef } : undefined) : await service.get(args[0]);
     const final = command === "verify-task" ? await service.wait(result.runId as string) : result;
     console.log(JSON.stringify(final, null, 2));
     if (command === "verify-task") process.exitCode = exitCode(final.verdict as Verdict ?? "UNVERIFIABLE");
+    return;
+  }
+  if (command === "requirement-review" || command === "confirmed-requirements") {
+    if (!args[0]) throw new Error(`${command} requires REVIEW_REF`);
+    if (command === "confirmed-requirements") console.log(JSON.stringify(await confirmedRequirementSnapshot(dataDir, args[0], option(args, "--current-task")), null, 2));
+    else {
+      const review = requirementReviewView(await readRequirementReview(dataDir, args[0]));
+      console.log(outputFormat(args) === "json" ? JSON.stringify(review, null, 2) : review.text);
+    }
+    return;
+  }
+  if (command === "scope-review") {
+    if (!args[0]) throw new Error("scope-review requires PROPOSAL_REF");
+    const proposal = await readScopeProposal(dataDir, args[0]);
+    const intake = await readTaskIntake(dataDir, await readTask(dataDir, proposal.parentTaskRef));
+    console.log(JSON.stringify(scopeReview(proposal, intake.conversation), null, 2));
     return;
   }
   if (command === "providers") {
@@ -158,9 +203,11 @@ async function main(): Promise<void> {
     const selection = selectModel(option(args, "--provider") ?? "deepseek", option(args, "--model"));
     const resolution = await readResolution(resolutionId, dataDir);
     const profile = await readFileProfile(profilePath);
+    assertEvidenceOutsideRoots(dataDir, profile);
     const generation = await new PiFilePlanGateway(selection.piProvider, selection.modelId).propose(resolution, profile);
     const plan = freezePlan(resolution, generation.proposal, "model-proposal");
     assertFilePlanMatchesProfile(plan, profile);
+    await saveFileProfile(dataDir, profile);
     const storedAt = await savePlanRecord(dataDir, { plan, generation: { model: generation.model, promptHash: generation.promptHash, usage: generation.usage, profileId: profile.profileId, profileSha256: fileProfileHash(profile) } });
     console.log(JSON.stringify({ planHash: plan.planHash, storedAt, coverage: plan.coverage, meaning: "计划已冻结，尚未读取交付或得出验收结论" }, null, 2));
     return;
@@ -191,8 +238,13 @@ async function main(): Promise<void> {
     const record = await readPlanRecord(dataDir, args[0]);
     if (outputFormat(args) === "json") console.log(JSON.stringify(record, null, 2));
     else {
-      console.log(`计划 ${record.plan.planHash}｜模型 ${record.generation.model}｜范围 ${record.generation.profileId}`);
-      for (const row of record.plan.coverage) console.log(`${row.requirementId}：${row.status}${row.gapReason ? `，${row.gapReason}` : ""}`);
+      const resolution = await readResolution(record.plan.resolutionId, dataDir);
+      let profile;
+      if (record.plan.criteria.some(criterion => criterion.checks.some(check => check.type !== "http_sequence"))) {
+        try { profile = await readStoredFileProfile(dataDir, record.generation.profileSha256); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      }
+      console.log(renderAcceptancePlan(buildAcceptancePlan(record.plan, resolution, profile)));
     }
     return;
   }

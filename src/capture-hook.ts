@@ -20,7 +20,8 @@ export async function prepareVerificationHook(raw: string, options: CaptureHookO
     if (Buffer.byteLength(raw) > 1024 * 1024) throw new Error("Hook input exceeds 1 MiB");
     const payload = HookPayload.parse(JSON.parse(raw));
     const input = VerifyTaskInputSchema.parse(payload.tool_input);
-    if (input.taskRef) return {}; // Explicit registered snapshots keep the ordinary host approval flow.
+    // User decisions are read from a fresh capture, never from tool arguments.
+    if (input.taskRef && !input.taskSelection && !input.requirementReview) return {};
     const collect: SessionCapture = capture ?? (session => options.host === "codex"
       ? captureCodexTask(options.dataDir, session.sessionId, session.scope, options.codexBin)
       : captureClaudeTask(options.dataDir, session.sessionId, session.cwd, session.scope));
