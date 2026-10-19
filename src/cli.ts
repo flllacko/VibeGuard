@@ -34,6 +34,7 @@ import { PiReviewReplyGateway } from "./pi-review-reply-gateway.js";
 import { inspectExternalProject, prepareExternalProject } from "./external-project.js";
 import { checkExternalProjectRuntime } from "./docker-runtime.js";
 import { readRuntimeReport } from "./runtime-store.js";
+import { createExternalPlan, externalPlanInput, externalPlanView } from "./external-plan.js";
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -82,6 +83,7 @@ async function main(): Promise<void> {
   if (!command || command === "help") {
     console.log("External projects (preparation only): vibeguard project-prepare --profile FILE --review REVIEW_REF --current-task FRESH_TASK_REF\n                                    vibeguard project-inspect PROJECT_REF\nSaves a delivery copy and confirmed requirement binding; does not execute project code.");
     console.log("Docker runtime check: vibeguard project-runtime PROJECT_REF\n                      vibeguard runtime-report RUN_ID\nExplicitly starts the prepared copy in Docker, probes readiness and cleans it up. Readiness is not task acceptance.");
+    console.log("External HTTP planning: vibeguard project-plan-input PROJECT_REF --api-profile FILE\n                        vibeguard project-plan PROJECT_REF --api-profile FILE [--provider ID] [--model ID]\n                        vibeguard project-plan-record PLAN_REF [--format json]\nInput preview and plan reading do not call the model or execute the project.");
     console.log("Read-only files: vibeguard file-plan --resolution ID --profile FILE [--provider ID]\n                vibeguard register-task --task FILE --file-plan HASH --file-profile FILE\n                vibeguard verify-task TASK_REF");
     console.log("User setup (prints configuration only): vibeguard setup codex|claude-code [--format json] [--codex-bin PATH]");
     console.log("Connection wizard: vibeguard connect [codex|claude-code] [--dry-run | --yes]\n                   vibeguard doctor codex|claude-code\nNon-interactive connect previews only unless --yes is explicitly supplied.");
@@ -102,6 +104,25 @@ async function main(): Promise<void> {
         console.log(JSON.stringify(report, null, 2));
         process.exitCode = report.status === "ready" ? 0 : 2;
       } finally { process.removeListener("SIGINT", cancel); process.removeListener("SIGTERM", cancel); }
+    }
+    return;
+  }
+  if (command === "project-plan-input" || command === "project-plan" || command === "project-plan-record") {
+    if (!args[0]) throw new Error(`${command} requires ${command === "project-plan-record" ? "PLAN_REF" : "PROJECT_REF"}`);
+    if (command === "project-plan-record") {
+      const view = await externalPlanView(dataDir, args[0]);
+      console.log(outputFormat(args) === "json" ? JSON.stringify(view, null, 2) : view.text);
+    } else {
+      const path = option(args, "--api-profile");
+      if (!path) throw new Error(`${command} requires --api-profile FILE`);
+      const profile = await readApiProfile(path);
+      if (command === "project-plan-input") console.log(JSON.stringify(await externalPlanInput(dataDir, args[0], profile), null, 2));
+      else {
+        const model = selectModel(option(args, "--provider") ?? "deepseek", option(args, "--model"));
+        const record = await createExternalPlan(dataDir, args[0], profile, new PiPlanGateway(model.piProvider, model.modelId));
+        const view = await externalPlanView(dataDir, record.planRef);
+        console.log(outputFormat(args) === "json" ? JSON.stringify(view, null, 2) : `${view.text}\n外部计划引用：${record.planRef}`);
+      }
     }
     return;
   }

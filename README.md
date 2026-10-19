@@ -115,6 +115,12 @@ node dist/cli.js runtime-report RUN_ID
 
 以上命令支持 `--data-dir PATH`。记录实际就绪请求、日志、退出和清理；正常就绪仍是任务“无法验证”，不能证明功能完成。MCP 外部项目查询仍为准备状态，动态功能验收与 `.exe` 尚待后续阶段。详见 [Docker 运行说明](docs/19-docker-runtime.md)。
 
+### 外部项目验收规划（D3 第一步）
+
+已确认的要求可以生成关联原话、标准、步骤及缺口的 HTTP 计划。先用 `node dist/cli.js project-plan-input PROJECT_REF --api-profile api.json` 预览待发送材料；`project-plan` 使用同样参数调用默认 DeepSeek Flash；`project-plan-record PLAN_REF` 无需模型即可读回。配置仍需显式提供，生成计划尚不执行功能检查。详见[外部规划说明](docs/21-external-planning.md)。
+
+最终体验目标是**原 Agent 内发起验收，Windows 安装版负责接入与详细证据**，日常无需反复切换 App。公开调研与形态比较见[产品体验建议](docs/20-product-experience.md)。
+
 `intake` 接受一份 JSON 对话文件，保存消息原文、顺序、任务边界、来源和内容摘要。示例格式见 `fixtures/conversations/coupon-complete.json`。`transcriptCoverage.level: complete` 是提交者对**明确任务边界内**材料的声明；它本身不能证明宿主没有漏发消息。程序还会检查首尾 ID、序号缺口和摘要来源。
 
 ```powershell

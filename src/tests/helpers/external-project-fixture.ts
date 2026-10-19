@@ -11,7 +11,7 @@ import { ProjectProfileSchema } from "../../project-profile.js";
 import { prepareExternalProject } from "../../external-project.js";
 
 /** Synthetic original messages and approval, always labelled as such. No model or live host. */
-export async function prepareRuntimeFixture(directory: string, script: string, timeoutMs = 2000) {
+export async function prepareRuntimeFixture(directory: string, script: string, timeoutMs = 2000, options: { amendment?: string } = {}) {
   const dataDir = join(directory, "data"), root = join(directory, "source");
   await mkdir(dataDir, { recursive: true }); await mkdir(root);
   await writeFile(join(root, "package.json"), JSON.stringify({ name: "synthetic-runtime-fixture", type: "module", private: true }));
@@ -38,7 +38,19 @@ export async function prepareRuntimeFixture(directory: string, script: string, t
   fresh.transcriptCoverage.source = "host_adapter";
   fresh.messages.push({ id: "display", role: "assistant", sequence: 2, text: requirementReviewView(draft).text }, { id: "confirmation", role: "user", sequence: 3, text: "确认" });
   fresh.taskBoundary.endMessageId = "confirmation";
-  const current = await task(fresh), review = await applyRequirementReviewReply(dataDir, current.taskRef, { reviewRef: draft.reviewRef });
+  let current = await task(fresh), review = await applyRequirementReviewReply(dataDir, current.taskRef, { reviewRef: draft.reviewRef });
+  if (options.amendment) {
+    fresh.messages.push({ id: "confirmed-display", role: "assistant", sequence: 4, text: requirementReviewView(review).text },
+      { id: "amendment", role: "user", sequence: 5, text: `第1条改成：${options.amendment}` });
+    fresh.taskBoundary.endMessageId = "amendment";
+    current = await task(fresh);
+    review = await applyRequirementReviewReply(dataDir, current.taskRef, { reviewRef: review.reviewRef });
+    fresh.messages.push({ id: "amended-display", role: "assistant", sequence: 6, text: requirementReviewView(review).text },
+      { id: "amended-confirmation", role: "user", sequence: 7, text: "确认" });
+    fresh.taskBoundary.endMessageId = "amended-confirmation";
+    current = await task(fresh);
+    review = await applyRequirementReviewReply(dataDir, current.taskRef, { reviewRef: review.reviewRef });
+  }
   const prepared = await prepareExternalProject(dataDir, profilePath, review.reviewRef, current.taskRef);
   return { dataDir, root, profile, ...prepared };
 }

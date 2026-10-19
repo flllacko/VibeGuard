@@ -239,3 +239,9 @@ FileSnapshot 读取所有授权根，记录相对路径、类型、大小、逐�
 - [Docker 安全说明](https://docs.docker.com/engine/security/)
 - [Jev 价格与模型信息](https://docs.typesafe.ai/models)、[能力边界](https://docs.typesafe.ai/model-jaggedness/jev-1.13)
 - [Laya](https://github.com/NandhaKishorM/laya)
+
+## 13. 外部项目规划与共用入口（2026-10-19）
+
+`external-plan` 从 D1 的确认版条目生成规划投影，保留原始整理记录和改口原话；复用 HTTP 计划结构、覆盖门禁与 API 契约校验。投影以 reviewRef 标识确认版本，绑定采集时点、交付摘要、运行配置与 API 描述；生成前后及读回都核对来源。`project-plan-input` 与真实模型请求共用最小输入构造，避免预览与外发格式不一致。此阶段仅冻结计划，没有新增功能执行权限；详见[外部规划](21-external-planning.md)。
+
+桌面、原生插件与 CLI 均以共用引擎和证据记录为准。原 Agent 日常入口不依赖桌面窗口常开，具体后台生命周期与打包兼容性在 D4/D5 实测；见[体验设计](20-product-experience.md)。
