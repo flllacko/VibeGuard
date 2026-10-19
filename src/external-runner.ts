@@ -87,6 +87,8 @@ export async function readExternalRun(dataDir: string, runId: string) {
     if (!z.string().uuid().safeParse(item.evidenceId).success || `${item.evidenceId}.json` !== name) throw new Error("Observation identity mismatch");
     journal.push(item);
   }
+  journal.sort((left, right) => left.capturedAt.localeCompare(right.capturedAt) ||
+    (left.observation?.eventIndex ?? 0) - (right.observation?.eventIndex ?? 0));
   let finish: z.infer<typeof FinishSchema>;
   try { finish = FinishSchema.parse(await sealedRead(join(root, "finish.json"))); }
   catch (error) {

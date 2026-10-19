@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "id": "notes-roundtrip",
+  "origin": "synthetic-developer-authored",
+  "requirement": "实现便签保存与读取。提交 text 时去掉首尾空白后保存，返回 HTTP 201、id 和清理后的 text；再用该 id 读取，返回 HTTP 200 及相同的 text。本轮验收须包含 text 为\"  Atlas  \"的保存再读取，以及 text 为\"\"时返回 HTTP 400、error 为\"EMPTY_TEXT\"。只验上述行为。",
+  "apiProfile": {
+    "schemaVersion": 1,
+    "profileId": "notes-test-api",
+    "description": "本地隔离便签测试接口。每次容器启动使用空内存存储；请求序列共享该容器内状态。示例仅描述结构，不能作为本次需求的预期答案。",
+    "routes": [
+      {
+        "method": "POST",
+        "pathTemplate": "/notes",
+        "description": "接收 JSON 对象，其中 text 为字符串；成功 HTTP 201，返回 id（运行时生成的字符串）和 text（字符串）。错误 HTTP 400，返回 error（字符串）。",
+        "successStatus": 201,
+        "requestExample": {"text": "example"},
+        "responseExample": {"id": "generated-id", "text": "example"}
+      },
+      {
+        "method": "GET",
+        "pathTemplate": "/notes/{id}",
+        "description": "按创建响应中的 id 读取一条便签；成功 HTTP 200，返回 id 和 text。不存在时 HTTP 404。",
+        "successStatus": 200,
+        "responseExample": {"id": "generated-id", "text": "example"}
+      }
+    ],
+    "isolationRules": []
+  },
+  "variants": [
+    {
+      "id": "correct",
+      "script": "import http from 'node:http';import {randomUUID} from 'node:crypto';const notes=new Map();http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');const send=(status,value)=>{res.statusCode=status;res.end(JSON.stringify(value))};if(req.url==='/health'){send(200,{ready:true});return}if(req.method==='POST'&&req.url==='/notes'){let body='';req.on('data',c=>body+=c);req.on('end',()=>{try{const raw=JSON.parse(body).text;if(typeof raw!=='string')throw Error();const text=raw.trim();if(!text){send(400,{error:'EMPTY_TEXT'});return}const id=randomUUID();notes.set(id,text);send(201,{id,text})}catch{send(400,{error:'INVALID_JSON'})}});return}if(req.method==='GET'&&req.url.startsWith('/notes/')){const id=decodeURIComponent(req.url.slice(7));if(!notes.has(id)){send(404,{error:'NOT_FOUND'});return}send(200,{id,text:notes.get(id)});return}send(404,{error:'NOT_FOUND'})}).listen(Number(process.env.PORT),'127.0.0.1');",
+      "expectedVerdict": "VERIFIED"
+    },
+    {
+      "id": "faulty",
+      "script": "import http from 'node:http';import {randomUUID} from 'node:crypto';const notes=new Map();http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');const send=(status,value)=>{res.statusCode=status;res.end(JSON.stringify(value))};if(req.url==='/health'){send(200,{ready:true});return}if(req.method==='POST'&&req.url==='/notes'){let body='';req.on('data',c=>body+=c);req.on('end',()=>{try{const raw=JSON.parse(body).text;if(typeof raw!=='string')throw Error();const text=raw.trim();if(!text){send(400,{error:'EMPTY_TEXT'});return}const id=randomUUID();notes.set(id,raw);send(201,{id,text})}catch{send(400,{error:'INVALID_JSON'})}});return}if(req.method==='GET'&&req.url.startsWith('/notes/')){const id=decodeURIComponent(req.url.slice(7));if(!notes.has(id)){send(404,{error:'NOT_FOUND'});return}send(200,{id,text:notes.get(id)});return}send(404,{error:'NOT_FOUND'})}).listen(Number(process.env.PORT),'127.0.0.1');",
+      "expectedVerdict": "FAILED"
+    },
+    {
+      "id": "unavailable",
+      "script": "console.error('Notes evaluation: intentional startup failure');process.exit(11);",
+      "expectedVerdict": "UNVERIFIABLE"
+    }
+  ],
+  "oracle": [
+    {"method":"POST","path":"/notes","body":{"text":"  Atlas  "},"expectedStatus":201,"pointer":"/text","equals":"Atlas"},
+    {"method":"GET","path":"/notes/{id}","expectedStatus":200,"pointer":"/text","equals":"Atlas"},
+    {"method":"POST","path":"/notes","body":{"text":""},"expectedStatus":400,"pointer":"/error","equals":"EMPTY_TEXT"}
+  ]
+}

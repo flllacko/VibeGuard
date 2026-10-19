@@ -7,8 +7,9 @@ const Identifier = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/);
 
 const JsonAssertionSchema = z.object({
   pointer: z.string().regex(/^(?:\/(?:[^/~]|~[01])*)*$/),
-  equals: z.unknown(),
-}).strict();
+  equals: z.unknown().optional(),
+  equalsCapture: Identifier.optional(),
+}).strict().refine(value => Object.hasOwn(value, "equals") !== (value.equalsCapture !== undefined), "Use exactly one literal equals or equalsCapture");
 
 const HttpStepSchema = z.object({
   stepId: Identifier,
@@ -87,6 +88,9 @@ export function freezePlan(resolution: Resolution, candidate: unknown, source: F
         if (stepIds.has(step.stepId)) throw new Error(`Duplicate step ID in ${check.checkId}: ${step.stepId}`);
         stepIds.add(step.stepId);
         validatePathTemplate(step.pathTemplate, availableCaptures);
+        for (const assertion of step.assertions) {
+          if (assertion.equalsCapture && !availableCaptures.has(assertion.equalsCapture)) throw new Error(`Assertion uses unknown or future capture ${assertion.equalsCapture} in ${check.checkId}`);
+        }
         for (const capture of step.captures) {
           if (availableCaptures.has(capture.name)) throw new Error(`Duplicate capture ${capture.name} in ${check.checkId}`);
           availableCaptures.add(capture.name);

@@ -31,6 +31,7 @@ export const ExternalPlanRecordSchema = z.object({
   generation: z.object({ model: z.string().min(1), promptHash: ProjectHash,
     usage: z.object({ inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative(), estimatedCostUsd: z.number().nonnegative() }).strict(),
     reusedFromPlanRef: z.string().uuid().optional(),
+    modelCalls: z.number().int().min(0).max(2).optional(),
   }).strict(),
   recordHash: ProjectHash,
 }).strict();
@@ -81,6 +82,7 @@ export async function createExternalPlan(dataDir: string, projectRef: string, ap
     checkedConversationSha256: project.checkedConversationSha256, runtimeProfileSha256: project.profileSha256,
     apiProfileSha256: profileHash(profile), apiProfile: profile, plan,
     generation: { model: generation.model, promptHash: generation.promptHash, usage: generation.usage,
+      ...(generation.modelCalls !== undefined ? { modelCalls: generation.modelCalls } : {}),
       ...(generation.reusedFromPlanRef ? { reusedFromPlanRef: generation.reusedFromPlanRef } : {}) }, recordHash: "0".repeat(64) });
   candidate.recordHash = digest(candidate);
   await mkdir(join(dataDir, "external-plans"), { recursive: true });

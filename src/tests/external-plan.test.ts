@@ -10,7 +10,7 @@ import { createExternalPlan, externalPlanInput, externalPlanView, readExternalPl
 import { ApiProfileSchema, type PlanGatewayOutput } from "../pi-plan-gateway.js";
 import { projectSnapshotDirectory } from "../project-snapshot.js";
 import { prepareRuntimeFixture } from "./helpers/external-project-fixture.js";
-import { prepareExternalEvaluation } from "../evaluate-external-run.js";
+import { oraclePathMatches, prepareExternalEvaluation } from "../evaluate-external-run.js";
 
 const execute = promisify(execFile);
 const profile = ApiProfileSchema.parse({ schemaVersion: 1, profileId: "synthetic-service-api", description: "Synthetic API contract, not observed application output",
@@ -134,3 +134,10 @@ test("offline evaluation preview excludes delivery source, variant labels and in
   for (const forbidden of ["PRIVATE_ORACLE", "PRIVATE_SOURCE", '"variants"', '"oracle"', '"expectedVerdict"']) assert.equal(outgoing.includes(forbidden), false);
   await assert.rejects(prepareExternalEvaluation(path, out), { code: "EEXIST" });
 }));
+
+test("independent oracle accepts generated IDs and renamed capture variables while preserving static path segments", () => {
+  assert.equal(oraclePathMatches("/records/{id}", "/records/{createdId}"), true);
+  assert.equal(oraclePathMatches("/records/{id}", "/records/generated-123"), true);
+  for (const path of ["/records/", "/other/generated-123", "/records/generated-123/more", "/records"]) assert.equal(oraclePathMatches("/records/{id}", path), false);
+  assert.equal(oraclePathMatches("/discount", "/discounts"), false);
+});

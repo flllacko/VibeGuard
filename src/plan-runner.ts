@@ -129,12 +129,12 @@ export async function runFrozenPlan(plan: FrozenPlan, resolution: Resolution, ba
 }
 
 async function runHttpSequence(check: Extract<FrozenPlan["criteria"][number]["checks"][number], { type: "http_sequence" }>, base: URL, evidence: HttpStepEvidence[], options: PlanRunOptions, runDeadline: number): Promise<{ verdict: Verdict; evidenceIds: string[]; reason: string }> {
-  const captures = new Map<string, string>();
+  const captures = new Map<string, string | number>();
   const evidenceIds: string[] = [];
   const deadline = Math.min(runDeadline, Date.now() + check.timeoutMs);
   for (const step of check.steps) {
     if (options.signal?.aborted || Date.now() >= deadline) return { verdict: "UNVERIFIABLE", evidenceIds, reason: `${step.stepId}: 已取消或执行预算耗尽，后续步骤未执行` };
-    const path = step.pathTemplate.replace(/\{([A-Za-z][A-Za-z0-9_-]*)\}/g, (_match, name: string) => encodeURIComponent(captures.get(name) ?? ""));
+    const path = step.pathTemplate.replace(/\{([A-Za-z][A-Za-z0-9_-]*)\}/g, (_match, name: string) => encodeURIComponent(String(captures.get(name) ?? "")));
     const url = new URL(path, base);
     if (url.origin !== base.origin) throw new Error("Step escaped local target origin");
     const item: HttpStepEvidence = {
@@ -176,8 +176,9 @@ async function runHttpSequence(check: Extract<FrozenPlan["criteria"][number]["ch
       }
       for (const assertion of step.assertions) {
         const actual = jsonPointer(body, assertion.pointer);
-        if (!actual.found || !isDeepStrictEqual(actual.value, assertion.equals)) {
-          return { verdict: "FAILED", evidenceIds, reason: `${step.stepId}: ${assertion.pointer} 实际 ${JSON.stringify(actual.value)}，预期 ${JSON.stringify(assertion.equals)}` };
+        const expected = assertion.equalsCapture ? captures.get(assertion.equalsCapture) : assertion.equals;
+        if (!actual.found || !isDeepStrictEqual(actual.value, expected)) {
+          return { verdict: "FAILED", evidenceIds, reason: `${step.stepId}: ${assertion.pointer} 实际 ${JSON.stringify(actual.value)}，预期 ${JSON.stringify(expected)}` };
         }
       }
       for (const capture of step.captures) {
@@ -185,7 +186,7 @@ async function runHttpSequence(check: Extract<FrozenPlan["criteria"][number]["ch
         if (!value.found || (typeof value.value !== "string" && typeof value.value !== "number")) {
           return { verdict: "FAILED", evidenceIds, reason: `${step.stepId}: 无法从 ${capture.pointer} 读取 ${capture.name}` };
         }
-        captures.set(capture.name, String(value.value));
+        captures.set(capture.name, value.value);
       }
     } catch (error) {
       item.error = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
