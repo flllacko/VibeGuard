@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "user-amount-230",
+  "origin": "user-provided",
+  "requirement": "做一个 HTTP 接口，接收一个整数 amount（订单金额，单位元）。amount 大于等于 230 时返回 JSON {\"discount\": 30}，小于 230 时返回 {\"discount\": 0}。",
+  "apiProfile": {
+    "schemaVersion": 1,
+    "profileId": "amount-discount-test-api",
+    "description": "本地隔离测试接口契约。金额单位为元。只验整数输入下的功能行为；不包含账号、生产地址或本次任务的标准答案。",
+    "routes": [
+      {
+        "method": "POST",
+        "pathTemplate": "/discount",
+        "description": "接收 JSON 对象，其中 amount 为整数、单位元；响应 HTTP 200，JSON 对象中 discount 为整数、单位元。responseExample 只展示结构，不说明本次业务预期。",
+        "successStatus": 200,
+        "requestExample": {"amount": 0},
+        "responseExample": {"discount": 0}
+      }
+    ],
+    "isolationRules": []
+  },
+  "variants": [
+    {
+      "id": "correct",
+      "script": "import http from 'node:http';http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');if(req.url==='/health'){res.end(JSON.stringify({ready:true}));return}if(req.method!=='POST'||req.url!=='/discount'){res.statusCode=404;res.end('{}');return}let text='';req.on('data',chunk=>text+=chunk);req.on('end',()=>{try{const {amount}=JSON.parse(text);if(!Number.isInteger(amount))throw Error('integer required');res.end(JSON.stringify({discount:amount>=230?30:0}))}catch{res.statusCode=400;res.end(JSON.stringify({error:'integer required'}))}})}).listen(Number(process.env.PORT),'127.0.0.1');",
+      "expectedVerdict": "VERIFIED"
+    },
+    {
+      "id": "faulty",
+      "script": "import http from 'node:http';http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');if(req.url==='/health'){res.end(JSON.stringify({ready:true}));return}if(req.method!=='POST'||req.url!=='/discount'){res.statusCode=404;res.end('{}');return}let text='';req.on('data',chunk=>text+=chunk);req.on('end',()=>{try{const {amount}=JSON.parse(text);if(!Number.isInteger(amount))throw Error('integer required');res.end(JSON.stringify({discount:amount>230?30:0}))}catch{res.statusCode=400;res.end(JSON.stringify({error:'integer required'}))}})}).listen(Number(process.env.PORT),'127.0.0.1');",
+      "expectedVerdict": "FAILED"
+    },
+    {
+      "id": "unavailable",
+      "script": "console.error('D3 evaluation: intentionally unavailable local test delivery');process.exit(9);",
+      "expectedVerdict": "UNVERIFIABLE"
+    }
+  ],
+  "oracle": [
+    {"method": "POST", "path": "/discount", "body": {"amount": 229}, "expectedStatus": 200, "pointer": "/discount", "equals": 0},
+    {"method": "POST", "path": "/discount", "body": {"amount": 230}, "expectedStatus": 200, "pointer": "/discount", "equals": 30}
+  ]
+}

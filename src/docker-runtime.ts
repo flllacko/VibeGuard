@@ -9,6 +9,8 @@ import { ProjectRelativePath } from "./project-profile.js";
 import { createProjectArchive } from "./project-archive.js";
 import { readProjectSnapshot } from "./project-snapshot.js";
 import { runtimeDirectory, saveRuntimeReport, type RuntimeReport } from "./runtime-store.js";
+import { dockerHttpTransport } from "./docker-http.js";
+import type { HttpTransport } from "./plan-runner.js";
 
 const LABEL = "io.vibeguard.runtime", NODE = "/usr/local/bin/node";
 // Fixed collector code; user paths and port are separate argv, not executable source.
@@ -31,7 +33,8 @@ function assertContainerInspection(value: any, runId: string, imageId: string, p
 }
 class RuntimeStop extends Error {}
 
-export async function checkExternalProjectRuntime(dataDir: string, projectRef: string, options: { client?: DockerClient; signal?: AbortSignal } = {}): Promise<RuntimeReport> {
+export async function checkExternalProjectRuntime(dataDir: string, projectRef: string, options: { client?: DockerClient; signal?: AbortSignal;
+  onReady?: (session: { runId: string; port: number; request: HttpTransport }) => Promise<void> } = {}): Promise<RuntimeReport> {
   const { project, profile, snapshot } = await readExternalProject(dataDir, projectRef);
   const runId = randomUUID(), containerName = `vibeguard-${runId}`, directory = runtimeDirectory(dataDir, runId);
   await mkdir(directory, { recursive: true });
@@ -115,6 +118,13 @@ export async function checkExternalProjectRuntime(dataDir: string, projectRef: s
       if (attempt < 59) await delay(Math.min(200, Math.max(0, deadline - Date.now())), undefined, { signal: options.signal });
     }
     if (report.status !== "ready") throw new RuntimeStop("项目未在有界时间/次数内达到就绪条件。");
+    if (options.onReady) {
+      report.stage = "execution";
+      const request = dockerHttpTransport({ runId, containerId: report.containerId, port: profile.runtime.containerPort,
+        async invoke(args, commandOptions) { const eventIndex = report.events.length; return { result: await invoke("http_request", args, commandOptions), eventIndex }; } });
+      await options.onReady({ runId, port: profile.runtime.containerPort, request });
+      report.reason = "容器就绪后已完成受控执行阶段；功能结论见单独的外部验收报告。";
+    }
   } catch (error) {
     report.status = options.signal?.aborted ? "cancelled" : "unavailable";
     report.reason = options.signal?.aborted ? "用户取消运行检查；仍尝试收集日志并清理本次容器。" : (error instanceof Error ? error.message : "运行检查异常").slice(0, 2400);

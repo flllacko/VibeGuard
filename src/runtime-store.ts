@@ -13,7 +13,7 @@ export const RuntimeReportSchema = z.object({
   runId: z.string().uuid(), projectRef: z.string().uuid(), projectRecordHash: ProjectHash, targetSnapshotHash: ProjectHash, profileSha256: ProjectHash,
   startedAt: z.string().datetime(), completedAt: z.string().datetime(),
   status: z.enum(["ready", "unavailable", "cancelled"]), verdict: z.literal("UNVERIFIABLE"),
-  stage: z.enum(["configuration", "archive", "docker", "image", "create", "copy", "start", "readiness", "integrity"]),
+  stage: z.enum(["configuration", "archive", "docker", "image", "create", "copy", "start", "readiness", "integrity", "execution"]),
   reason: z.string().max(2400), containerName: z.string().regex(/^vibeguard-[a-f0-9-]{36}$/),
   containerId: z.string().regex(/^[a-f0-9]{64}$/).optional(), imageId: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
   stagingContainerId: z.string().regex(/^[a-f0-9]{64}$/).optional(), runtimeImageId: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),

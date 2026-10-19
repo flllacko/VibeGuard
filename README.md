@@ -119,6 +119,12 @@ node dist/cli.js runtime-report RUN_ID
 
 已确认的要求可以生成关联原话、标准、步骤及缺口的 HTTP 计划。先用 `node dist/cli.js project-plan-input PROJECT_REF --api-profile api.json` 预览待发送材料；`project-plan` 使用同样参数调用默认 DeepSeek Flash；`project-plan-record PLAN_REF` 无需模型即可读回。配置仍需显式提供，生成计划尚不执行功能检查。详见[外部规划说明](docs/21-external-planning.md)。
 
+### 实际执行外部 HTTP 计划（D3）
+
+`node dist/cli.js project-run PLAN_REF` 在容器就绪后执行冻结计划，逐步保存真实请求响应，再清理资源。`project-report RUN_ID` 展示原话、结论和实际观察，`project-evidence RUN_ID EVIDENCE_ID` 展开原始证据；均支持 `--data-dir PATH`。报告/证据读回无需模型或 Docker。
+
+用户本轮新任务已通过一次真实 Flash 规划，在正确、缺陷、不可用三份容器交付得到三态，原进程结束后读回成功。当前支持范围、自己复验命令及未执行项见 [D3 实测说明](docs/22-d3-http-execution.md)。这不代表原聊天 MCP 自动执行或任意依赖项目已支持。
+
 最终体验目标是**原 Agent 内发起验收，Windows 安装版负责接入与详细证据**，日常无需反复切换 App。公开调研与形态比较见[产品体验建议](docs/20-product-experience.md)。
 
 `intake` 接受一份 JSON 对话文件，保存消息原文、顺序、任务边界、来源和内容摘要。示例格式见 `fixtures/conversations/coupon-complete.json`。`transcriptCoverage.level: complete` 是提交者对**明确任务边界内**材料的声明；它本身不能证明宿主没有漏发消息。程序还会检查首尾 ID、序号缺口和摘要来源。

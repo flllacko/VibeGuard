@@ -10,6 +10,15 @@ import { checkExternalProjectRuntime, READINESS_PROBE } from "../docker-runtime.
 import { readRuntimeReport, runtimeDirectory } from "../runtime-store.js";
 import { projectSnapshotDirectory } from "../project-snapshot.js";
 import { prepareRuntimeFixture } from "./helpers/external-project-fixture.js";
+import { createExternalPlan } from "../external-plan.js";
+import { ApiProfileSchema, type PlanGatewayOutput } from "../pi-plan-gateway.js";
+import { readExternalEvidence, readExternalRun, runExternalPlan } from "../external-runner.js";
+import { HTTP_COLLECTOR, dockerHttpTransport } from "../docker-http.js";
+import { createServer } from "node:http";
+import { promisify } from "node:util";
+import { execFile } from "node:child_process";
+
+const execute = promisify(execFile);
 
 const result = (stdout = "", exitCode = 0, stderr = ""): DockerCommandResult => ({ stdout, stderr, exitCode, signal: null, timedOut: false, aborted: false, outputTruncated: false, durationMs: 1 });
 class FakeDocker implements DockerClient {
@@ -123,4 +132,102 @@ test("cancellation still cleans up with independent bounded commands; corrupt sn
 test("readiness probe parameters remain argv data rather than executable source", () => {
   assert.match(READINESS_PROBE, /process\.argv\[2\]/); assert.match(READINESS_PROBE, /127\.0\.0\.1/);
   assert.equal(READINESS_PROBE.includes("eval("), false);
+});
+
+const api = ApiProfileSchema.parse({ schemaVersion: 1, profileId: "synthetic-status", description: "Only for orchestration tests", routes: [
+  { method: "GET", pathTemplate: "/health", description: "Read health", successStatus: 200, responseExample: "ok" }], isolationRules: [] });
+function syntheticPlan(fail = false): PlanGatewayOutput {
+  return { model: "fixture-no-api", promptHash: "a".repeat(64), usage: { inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 }, proposal: {
+    criteria: [{ criterionId: "available", requirementIds: ["reachable-service"], sourceKind: "explicit_user", description: "读取服务", expected: "响应符合要求", preconditions: [], checks: [
+      { checkId: "http", type: "http_sequence", purpose: "读取", timeoutMs: 2000, steps: [{ stepId: "read", method: "GET", pathTemplate: "/health", expectedStatus: 200, captures: [], assertions: fail ? [{ pointer: "", equals: "expected" }] : [] }] }] }],
+    coverage: [{ requirementId: "reachable-service", criterionIds: ["available"], status: "planned" }],
+  } };
+}
+
+test("external lifecycle with synthetic Docker saves three verdicts, actual-command references and cross-process evidence; archived reports survive later source changes", async () => temporary(async directory => {
+  for (const kind of ["correct", "faulty", "unavailable"] as const) {
+    const root = join(directory, kind); await mkdir(root);
+    const fixture = await prepareRuntimeFixture(root, "// synthetic unit-test delivery");
+    const plan = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return syntheticPlan(kind === "faulty"); } });
+    const docker = new FakeDocker(kind === "unavailable" ? "crash" : "ready");
+    const run = await runExternalPlan(fixture.dataDir, plan.planRef, { client: docker });
+    assert.equal(run.verdict, kind === "correct" ? "VERIFIED" : kind === "faulty" ? "FAILED" : "UNVERIFIABLE");
+    const first = docker.calls.findIndex(call => call.args.includes(HTTP_COLLECTOR));
+    const clean = docker.calls.findIndex(call => call.args[0] === "rm");
+    if (kind !== "unavailable") {
+      assert.ok(first > 0 && clean > first); assert.equal(run.evidenceIds.length, 1);
+      const evidence: any = await readExternalEvidence(fixture.dataDir, run.runId, run.evidenceIds[0]!);
+      assert.equal(evidence.response.status, 200); assert.equal(evidence.observation.runtimeRunId, run.runtime!.runId);
+      const command = await execute(process.execPath, ["dist/cli.js", "project-evidence", run.runId, run.evidenceIds[0]!, "--data-dir", fixture.dataDir]);
+      assert.deepEqual(JSON.parse(command.stdout), evidence);
+    } else assert.deepEqual(run.evidenceIds, []);
+    await writeFile(join(fixture.dataDir, "external-plans", `${plan.planRef}.json`), "changed after run");
+    await writeFile(join(projectSnapshotDirectory(fixture.dataDir, fixture.project.snapshotRef), "files", "server.mjs"), "new source");
+    const readback = await execute(process.execPath, ["dist/cli.js", "project-report", run.runId, "--format", "json", "--data-dir", fixture.dataDir]);
+    assert.equal(JSON.parse(readback.stdout).verdict, run.verdict);
+  }
+}));
+
+test("external cleanup failures and unobserved preconditions cannot become verified; evidence tampering is rejected", async () => temporary(async directory => {
+  const fixture = await prepareRuntimeFixture(directory, "// synthetic");
+  const output = syntheticPlan(); output.proposal.criteria[0]!.preconditions = ["一个尚未核对的条件"];
+  const plan = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return output; } });
+  const run = await runExternalPlan(fixture.dataDir, plan.planRef, { client: new FakeDocker() });
+  assert.equal(run.verdict, "UNVERIFIABLE"); assert.match(run.report!.requirements[0]!.reason, /前置条件/);
+  const plain = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return syntheticPlan(); } });
+  const failedCleanup = await runExternalPlan(fixture.dataDir, plain.planRef, { client: new FakeDocker("remove_failure") });
+  assert.equal(failedCleanup.verdict, "UNVERIFIABLE"); assert.equal(failedCleanup.runtime!.cleanup.status, "incomplete");
+  const id = run.evidenceIds[0]!;
+  await writeFile(join(fixture.dataDir, "external-runs", run.runId, "observations", `${id}.json`), "{}");
+  await assert.rejects(readExternalRun(fixture.dataDir, run.runId));
+}));
+
+test("missing completion record preserves journal evidence as incomplete, never passed", async () => temporary(async directory => {
+  const fixture = await prepareRuntimeFixture(directory, "// synthetic");
+  const plan = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return syntheticPlan(); } });
+  const run = await runExternalPlan(fixture.dataDir, plan.planRef, { client: new FakeDocker() });
+  await rm(join(fixture.dataDir, "external-runs", run.runId, "finish.json"));
+  const incomplete = await readExternalRun(fixture.dataDir, run.runId);
+  assert.equal(incomplete.status, "incomplete"); assert.equal(incomplete.verdict, "UNVERIFIABLE"); assert.equal(incomplete.journal!.length, 1);
+  assert.equal((await readExternalEvidence(fixture.dataDir, run.runId, run.evidenceIds[0]!) as any).response.status, 200);
+}));
+
+test("cancellation after an observation preserves evidence and cleans resources; later steps are not invented", async () => temporary(async directory => {
+  const fixture = await prepareRuntimeFixture(directory, "// synthetic");
+  const output = syntheticPlan();
+  const check = output.proposal.criteria[0]!.checks[0]!;
+  assert.equal(check.type, "http_sequence"); if (check.type !== "http_sequence") throw Error("fixture");
+  check.steps.push({ ...check.steps[0]!, stepId: "second" });
+  const plan = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return output; } });
+  const controller = new AbortController(), docker = new FakeDocker();
+  const run = await runExternalPlan(fixture.dataDir, plan.planRef, { signal: controller.signal, client: { async invoke(args, options) {
+    const response = await docker.invoke(args, options);
+    if (args.includes(HTTP_COLLECTOR)) controller.abort();
+    return response;
+  } } });
+  assert.equal(run.verdict, "UNVERIFIABLE"); assert.equal(run.runtime!.status, "cancelled"); assert.equal(run.runtime!.cleanup.status, "removed");
+  assert.equal(run.evidenceIds.length, 1); assert.equal(docker.calls.filter(call => call.args.includes(HTTP_COLLECTOR)).length, 1);
+}));
+
+test("fixed HTTP collector makes real requests, keeps redirects local, bounds bodies/time and never evaluates request content", async () => {
+  const server = createServer((req, res) => {
+    if (req.url === "/large") { res.end("x".repeat(70000)); return; }
+    if (req.url === "/slow") { return; }
+    if (req.url === "/redirect") { res.writeHead(302, { location: "http://example.invalid/" }); res.end(); return; }
+    let body = ""; req.on("data", chunk => { body += chunk; }); req.on("end", () => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ received: body ? JSON.parse(body) : null })); });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const cli = new DockerCli(process.execPath); let calls = 0;
+  const transport = dockerHttpTransport({ runId: "11111111-1111-4111-8111-111111111111", containerId: "b".repeat(64), port: address.port,
+    async invoke(args, options) { calls++; return { result: await cli.invoke(["--input-type=commonjs", "-e", HTTP_COLLECTOR, args.at(-1)!], options), eventIndex: calls }; } });
+  try {
+    const body = { text: "'; throw Error('must remain data'); //" };
+    assert.deepEqual((await transport({ method: "POST", path: "/echo", body }, 2000)).response?.body, { received: body });
+    assert.equal((await transport({ method: "GET", path: "/redirect" }, 2000)).response?.status, 302);
+    assert.equal((await transport({ method: "GET", path: "/large" }, 2000)).error, "BODY_LIMIT");
+    assert.equal((await transport({ method: "GET", path: "/slow" }, 100)).error, "REQUEST_TIMEOUT");
+    const before = calls;
+    await assert.rejects(transport({ method: "GET", path: "//elsewhere" }, 1000)); assert.equal(calls, before);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });

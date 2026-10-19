@@ -22,7 +22,7 @@ const FrozenPlanSchema = PlanProposalSchema.extend({
   conversationSha256: ProjectHash, requirementSnapshotHash: ProjectHash,
   source: z.enum(["model-proposal", "manual-fixture"]),
 }).strict();
-const RecordSchema = z.object({
+export const ExternalPlanRecordSchema = z.object({
   schemaVersion: z.literal(1), kind: z.literal("external-http-plan"), planRef: z.string().uuid(), createdAt: z.string().datetime(),
   projectRef: z.string().uuid(), projectRecordHash: ProjectHash, targetSnapshotHash: ProjectHash,
   reviewRef: z.string().uuid(), reviewHash: ProjectHash, requirementsSha256: ProjectHash,
@@ -30,9 +30,11 @@ const RecordSchema = z.object({
   apiProfileSha256: ProjectHash, apiProfile: ApiProfileSchema, plan: FrozenPlanSchema,
   generation: z.object({ model: z.string().min(1), promptHash: ProjectHash,
     usage: z.object({ inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative(), estimatedCostUsd: z.number().nonnegative() }).strict(),
+    reusedFromPlanRef: z.string().uuid().optional(),
   }).strict(),
   recordHash: ProjectHash,
 }).strict();
+const RecordSchema = ExternalPlanRecordSchema;
 export type ExternalPlanRecord = z.infer<typeof RecordSchema>;
 const digest = ({ recordHash: ignored, ...body }: ExternalPlanRecord) => { void ignored; return sha256(JSON.stringify(body)); };
 function recordPath(dataDir: string, planRef: string) {
@@ -78,11 +80,23 @@ export async function createExternalPlan(dataDir: string, projectRef: string, ap
     reviewRef: project.reviewRef, reviewHash: project.reviewHash, requirementsSha256: project.requirementsSha256,
     checkedConversationSha256: project.checkedConversationSha256, runtimeProfileSha256: project.profileSha256,
     apiProfileSha256: profileHash(profile), apiProfile: profile, plan,
-    generation: { model: generation.model, promptHash: generation.promptHash, usage: generation.usage }, recordHash: "0".repeat(64) });
+    generation: { model: generation.model, promptHash: generation.promptHash, usage: generation.usage,
+      ...(generation.reusedFromPlanRef ? { reusedFromPlanRef: generation.reusedFromPlanRef } : {}) }, recordHash: "0".repeat(64) });
   candidate.recordHash = digest(candidate);
   await mkdir(join(dataDir, "external-plans"), { recursive: true });
   await writeFile(recordPath(dataDir, candidate.planRef), JSON.stringify(candidate, null, 2) + "\n", { flag: "wx", mode: 0o600 });
   return candidate;
+}
+
+/** Rebind unchanged, genuinely stored planning content to another fixed delivery of the same reviewed requirements. No model call. */
+export async function reuseExternalPlan(dataDir: string, planRef: string, projectRef: string) {
+  const original = await readExternalPlan(dataDir, planRef), target = await planningMaterial(dataDir, projectRef);
+  if (JSON.stringify(original.resolution.revisions) !== JSON.stringify(target.resolution.revisions)) throw new Error("Reusing planning content requires identical reviewed requirements and sources");
+  return createExternalPlan(dataDir, projectRef, original.record.apiProfile, { async propose() {
+    return { proposal: { criteria: original.record.plan.criteria, coverage: original.record.plan.coverage },
+      model: original.record.generation.model, promptHash: original.record.generation.promptHash,
+      usage: { inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 }, reusedFromPlanRef: original.record.planRef };
+  } });
 }
 
 export async function readExternalPlan(dataDir: string, planRef: string) {

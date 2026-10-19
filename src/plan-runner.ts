@@ -18,6 +18,20 @@ export interface HttpStepEvidence {
   request: { method: string; url: string; body?: unknown };
   response?: { status: number; body: unknown };
   error?: string;
+  observation?: { runtimeRunId: string; eventIndex: number; bodyBase64?: string; bodyBytes?: number };
+}
+
+export interface HttpObservation {
+  response?: { status: number; body: unknown };
+  error?: string;
+  observation?: HttpStepEvidence["observation"];
+}
+export type HttpTransport = (request: { method: "GET" | "POST"; path: string; body?: unknown }, timeoutMs: number, signal?: AbortSignal) => Promise<HttpObservation>;
+export interface PlanRunOptions {
+  transport?: HttpTransport; signal?: AbortSignal; maxDurationMs?: number;
+  blockedReason?: string; requireObservedPreconditions?: boolean;
+  onEvidence?: (item: HttpStepEvidence) => Promise<void>;
+  limitations?: string[];
 }
 
 export interface PlannedRunReport {
@@ -32,12 +46,12 @@ export interface PlannedRunReport {
   source: FrozenPlan["source"];
   environment: string;
   requirements: { requirementId: string; normalized: string; sourceRefs: SourceRef[]; verdict: Verdict; reason: string; evidenceIds: string[] }[];
-  criteria: { criterionId: string; verdict: Verdict; checks: { checkId: string; verdict: Verdict; evidenceIds: string[]; reason: string }[] }[];
+  criteria: { criterionId: string; verdict: Verdict; reason?: string; checks: { checkId: string; verdict: Verdict; evidenceIds: string[]; reason: string }[] }[];
   verdict: Verdict;
   limitations: string[];
 }
 
-export async function runFrozenPlan(plan: FrozenPlan, resolution: Resolution, baseUrl: string, environment: string, targetSnapshotHash: string, profile: ApiProfile): Promise<{ report: PlannedRunReport; evidence: HttpStepEvidence[] }> {
+export async function runFrozenPlan(plan: FrozenPlan, resolution: Resolution, baseUrl: string, environment: string, targetSnapshotHash: string, profile: ApiProfile, options: PlanRunOptions = {}): Promise<{ report: PlannedRunReport; evidence: HttpStepEvidence[] }> {
   if (!resolution.resolutionComplete) throw new Error("Cannot execute plan with incomplete requirement resolution");
   if (!/^[0-9a-f]{64}$/.test(targetSnapshotHash)) throw new Error("Target snapshot hash is required");
   const validatedPlan = freezePlan(resolution, { criteria: plan.criteria, coverage: plan.coverage }, plan.source);
@@ -69,7 +83,7 @@ export async function runFrozenPlan(plan: FrozenPlan, resolution: Resolution, ba
     requirements: [],
     criteria: [],
     verdict: "UNVERIFIABLE",
-    limitations: [
+    limitations: options.limitations ?? [
       "当前只执行受控的本地 HTTP 计划；没有浏览器、命令、数据库或外部项目隔离能力。",
       "计划中的自然语言前置条件尚未全部由机器独立核对，报告只支持执行过的断言。",
       "当前目标摘要由调用方提供；受控演示仅覆盖演示应用编译文件与变体配置，不是完整工作树快照。",
@@ -77,14 +91,21 @@ export async function runFrozenPlan(plan: FrozenPlan, resolution: Resolution, ba
       plan.source === "manual-fixture" ? "本次计划为人工固定样本，不能证明模型能自行设计验收。" : "模型规划能力须通过隐藏样本和人工标准答案另行评估。",
     ],
   };
+  const duration = options.maxDurationMs ?? 120000;
+  if (!Number.isInteger(duration) || duration < 1 || duration > 180000) throw new Error("Invalid plan execution budget");
+  const deadline = Date.now() + duration;
   for (const criterion of plan.criteria) {
     const checks: PlannedRunReport["criteria"][number]["checks"] = [];
     for (const check of criterion.checks) {
       if (check.type !== "http_sequence") throw new Error("HTTP runner does not execute file checks");
-      const executed = await runHttpSequence(check, base, evidence);
+      const blocked = options.blockedReason ?? (options.signal?.aborted ? "本次执行已取消，步骤未执行" : Date.now() >= deadline ? "执行预算已耗尽，步骤未执行" : undefined);
+      const executed = blocked ? { verdict: "UNVERIFIABLE" as const, evidenceIds: [], reason: blocked } : await runHttpSequence(check, base, evidence, options, deadline);
       checks.push({ checkId: check.checkId, ...executed });
     }
-    report.criteria.push({ criterionId: criterion.criterionId, verdict: combine(checks.map(check => check.verdict)), checks });
+    let verdict = combine(checks.map(check => check.verdict));
+    const reason = options.requireObservedPreconditions && criterion.preconditions.length ? "存在尚未以执行步骤核对的前置条件：" + criterion.preconditions.join("；") : undefined;
+    if (reason && verdict !== "FAILED") verdict = "UNVERIFIABLE";
+    report.criteria.push({ criterionId: criterion.criterionId, verdict, ...(reason ? { reason } : {}), checks });
   }
   for (const requirement of requirements) {
     const coverage = plan.coverage.find(row => row.requirementId === requirement.requirementId);
@@ -99,7 +120,7 @@ export async function runFrozenPlan(plan: FrozenPlan, resolution: Resolution, ba
       normalized: requirement.normalized,
       sourceRefs: requirement.sourceRefs,
       verdict,
-      reason: coverage.status === "planned" ? (decisive ? `${decisive.checkId}：${decisive.reason}` : "冻结计划中的检查均有执行证据") : coverage.gapReason ?? "缺少验收检查",
+      reason: coverage.status === "planned" ? (decisive ? `${decisive.checkId}：${decisive.reason}` : report.criteria.find(item => coverage.criterionIds.includes(item.criterionId) && item.reason)?.reason ?? "冻结计划中的检查均有执行证据") : coverage.gapReason ?? "缺少验收检查",
       evidenceIds: [...new Set(relevantChecks.flatMap(item => item.evidenceIds))],
     });
   }
@@ -107,10 +128,12 @@ export async function runFrozenPlan(plan: FrozenPlan, resolution: Resolution, ba
   return { report, evidence };
 }
 
-async function runHttpSequence(check: Extract<FrozenPlan["criteria"][number]["checks"][number], { type: "http_sequence" }>, base: URL, evidence: HttpStepEvidence[]): Promise<{ verdict: Verdict; evidenceIds: string[]; reason: string }> {
+async function runHttpSequence(check: Extract<FrozenPlan["criteria"][number]["checks"][number], { type: "http_sequence" }>, base: URL, evidence: HttpStepEvidence[], options: PlanRunOptions, runDeadline: number): Promise<{ verdict: Verdict; evidenceIds: string[]; reason: string }> {
   const captures = new Map<string, string>();
   const evidenceIds: string[] = [];
+  const deadline = Math.min(runDeadline, Date.now() + check.timeoutMs);
   for (const step of check.steps) {
+    if (options.signal?.aborted || Date.now() >= deadline) return { verdict: "UNVERIFIABLE", evidenceIds, reason: `${step.stepId}: 已取消或执行预算耗尽，后续步骤未执行` };
     const path = step.pathTemplate.replace(/\{([A-Za-z][A-Za-z0-9_-]*)\}/g, (_match, name: string) => encodeURIComponent(captures.get(name) ?? ""));
     const url = new URL(path, base);
     if (url.origin !== base.origin) throw new Error("Step escaped local target origin");
@@ -124,17 +147,32 @@ async function runHttpSequence(check: Extract<FrozenPlan["criteria"][number]["ch
     evidenceIds.push(item.evidenceId);
     evidence.push(item);
     try {
+      const timeoutMs = Math.max(1, deadline - Date.now());
+      const observed = options.transport ? await options.transport({ method: step.method, path: url.pathname + url.search, ...(step.body !== undefined ? { body: step.body } : {}) }, timeoutMs, options.signal) : await (async (): Promise<HttpObservation> => {
       const response = await fetch(url, {
         method: step.method,
+        redirect: "manual",
         ...(step.body !== undefined ? { headers: { "content-type": "application/json" }, body: JSON.stringify(step.body) } : {}),
-        signal: AbortSignal.timeout(Math.min(check.timeoutMs, 60000)),
+        signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
       });
-      const text = await response.text();
+      const reader = response.body?.getReader(); const chunks: Uint8Array[] = []; let bytes = 0;
+      if (reader) for (;;) {
+        const next = await reader.read(); if (next.done) break;
+        bytes += next.value.byteLength;
+        if (bytes > 65536) { await reader.cancel(); throw new Error("HTTP response exceeds 64 KiB"); }
+        chunks.push(next.value);
+      }
+      const text = Buffer.concat(chunks).toString("utf8");
       let body: unknown;
       try { body = JSON.parse(text) as unknown; } catch { body = text; }
-      item.response = { status: response.status, body };
-      if (response.status !== step.expectedStatus) {
-        return { verdict: "FAILED", evidenceIds, reason: `${step.stepId}: HTTP ${response.status}，预期 ${step.expectedStatus}` };
+      return { response: { status: response.status, body } };
+      })();
+      item.observation = observed.observation;
+      item.response = observed.response;
+      if (observed.error || !observed.response) throw new Error(observed.error ?? "缺少实际 HTTP 响应");
+      const { status, body } = observed.response;
+      if (status !== step.expectedStatus) {
+        return { verdict: "FAILED", evidenceIds, reason: `${step.stepId}: HTTP ${status}，预期 ${step.expectedStatus}` };
       }
       for (const assertion of step.assertions) {
         const actual = jsonPointer(body, assertion.pointer);
@@ -152,7 +190,7 @@ async function runHttpSequence(check: Extract<FrozenPlan["criteria"][number]["ch
     } catch (error) {
       item.error = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
       return { verdict: "UNVERIFIABLE", evidenceIds, reason: `${step.stepId}: 请求未完成，${item.error}` };
-    }
+    } finally { await options.onEvidence?.(item); }
   }
   return { verdict: "VERIFIED", evidenceIds, reason: "计划步骤实际执行，状态码与 JSON 断言均满足" };
 }

@@ -6,10 +6,11 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { createExternalPlan, externalPlanInput, externalPlanView, readExternalPlan, type ExternalPlanGateway } from "../external-plan.js";
+import { createExternalPlan, externalPlanInput, externalPlanView, readExternalPlan, reuseExternalPlan, type ExternalPlanGateway } from "../external-plan.js";
 import { ApiProfileSchema, type PlanGatewayOutput } from "../pi-plan-gateway.js";
 import { projectSnapshotDirectory } from "../project-snapshot.js";
 import { prepareRuntimeFixture } from "./helpers/external-project-fixture.js";
+import { prepareExternalEvaluation } from "../evaluate-external-run.js";
 
 const execute = promisify(execFile);
 const profile = ApiProfileSchema.parse({ schemaVersion: 1, profileId: "synthetic-service-api", description: "Synthetic API contract, not observed application output",
@@ -105,4 +106,31 @@ test("CLI can preview minimal model input and display a persisted external plan 
   const restored = await execute(process.execPath, ["dist/cli.js", "project-plan-record", record.planRef, "--format", "json", "--data-dir", fixture.dataDir]);
   const view = JSON.parse(restored.stdout); assert.equal(view.planRef, record.planRef); assert.equal(view.verdict, "UNVERIFIABLE");
   assert.ok(view.text.includes("启动一个可访问的文本服务。"));
+}));
+
+test("reusing stored plan content rebinds a changed delivery, records no new model cost and rejects changed requirements", async () => temporary(async directory => {
+  const shared = join(directory, "data");
+  const firstDir = join(directory, "first"), secondDir = join(directory, "second"), thirdDir = join(directory, "third");
+  const { mkdir } = await import("node:fs/promises"); await mkdir(firstDir); await mkdir(secondDir); await mkdir(thirdDir);
+  const first = await prepareRuntimeFixture(firstDir, "// version one", 2000, { dataDir: shared });
+  const second = await prepareRuntimeFixture(secondDir, "// version two", 2000, { dataDir: shared });
+  const third = await prepareRuntimeFixture(thirdDir, "// other task", 2000, { dataDir: shared, quote: "一个不同的要求。" });
+  const original = await createExternalPlan(shared, first.project.projectRef, profile, gateway());
+  const reused = await reuseExternalPlan(shared, original.planRef, second.project.projectRef);
+  assert.deepEqual(reused.plan.criteria, original.plan.criteria); assert.deepEqual(reused.plan.coverage, original.plan.coverage);
+  assert.notEqual(reused.targetSnapshotHash, original.targetSnapshotHash); assert.notEqual(reused.plan.planHash, original.plan.planHash);
+  assert.equal(reused.generation.reusedFromPlanRef, original.planRef); assert.equal(reused.generation.usage.inputTokens, 0);
+  await assert.rejects(reuseExternalPlan(shared, original.planRef, third.project.projectRef), /identical reviewed requirements/);
+}));
+
+test("offline evaluation preview excludes delivery source, variant labels and independent oracle; preparing does not call a model", async () => temporary(async directory => {
+  const sample = { schemaVersion: 1, id: "synthetic-offline", origin: "synthetic-developer-authored", requirement: "检查整数边界。", apiProfile: profile,
+    variants: ["correct", "faulty", "unavailable"].map(id => ({ id, script: "throw Error('PRIVATE_SOURCE_SENTINEL');", expectedVerdict: "UNVERIFIABLE" })),
+    oracle: [1, 2].map(n => ({ method: "GET", path: "/health", expectedStatus: 200, pointer: "/private", equals: `PRIVATE_ORACLE_${n}` })) };
+  const path = join(directory, "sample.json"), out = join(directory, "evaluation"); await writeFile(path, JSON.stringify(sample));
+  const result = await prepareExternalEvaluation(path, out); assert.equal(result.modelCalls, 0);
+  const outgoing = await readFile(join(out, "outgoing-input.json"), "utf8");
+  assert.ok(outgoing.includes(sample.requirement));
+  for (const forbidden of ["PRIVATE_ORACLE", "PRIVATE_SOURCE", '"variants"', '"oracle"', '"expectedVerdict"']) assert.equal(outgoing.includes(forbidden), false);
+  await assert.rejects(prepareExternalEvaluation(path, out), { code: "EEXIST" });
 }));
