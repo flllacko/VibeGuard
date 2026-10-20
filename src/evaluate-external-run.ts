@@ -14,8 +14,11 @@ import { prepareRuntimeFixture } from "./tests/helpers/external-project-fixture.
 
 const CaseSchema = z.object({ schemaVersion: z.literal(1), id: z.string().regex(/^[a-z][a-z0-9-]*$/),
   requirement: z.string().min(1), origin: z.enum(["user-provided", "synthetic-developer-authored"]), apiProfile: ApiProfileSchema,
+  confirmedRequirements: z.array(z.object({ requirementId: z.string().regex(/^[a-z][a-z0-9-]*$/), quote: z.string().min(1) }).strict()).min(1).max(20).optional(),
+  expectedPlanningCoverage: z.array(z.object({ requirementId: z.string(), status: z.enum(["planned", "partial", "unverifiable"]) }).strict()).optional(),
   variants: z.array(z.object({ id: z.enum(["correct", "faulty", "unavailable"]), script: z.string().min(1),
-    expectedVerdict: z.enum(["VERIFIED", "FAILED", "UNVERIFIABLE"]) }).strict()).length(3),
+    expectedVerdict: z.enum(["VERIFIED", "FAILED", "UNVERIFIABLE"]),
+    expectedRequirements: z.record(z.string(), z.enum(["VERIFIED", "FAILED", "UNVERIFIABLE"])).optional() }).strict()).length(3),
   oracle: z.array(z.object({ method: z.enum(["GET", "POST"]), path: z.string(), body: z.unknown().optional(),
     expectedStatus: z.number().int(), pointer: z.string(), equals: z.unknown() }).strict()).min(2).max(12),
 }).strict();
@@ -46,7 +49,7 @@ export async function prepareExternalEvaluation(casePath: string, out: string) {
   const dataDir = join(out, "data"), projects = [];
   for (const variant of sample.variants) {
     const root = join(out, variant.id); await mkdir(root);
-    const fixture = await prepareRuntimeFixture(root, variant.script, 5000, { quote: sample.requirement, dataDir });
+    const fixture = await prepareRuntimeFixture(root, variant.script, 5000, { quote: sample.requirement, dataDir, requirements: sample.confirmedRequirements });
     projects.push({ id: variant.id, projectRef: fixture.project.projectRef });
   }
   const input = await externalPlanInput(dataDir, projects[0]!.projectRef, sample.apiProfile);
@@ -72,6 +75,9 @@ export async function runExternalEvaluation(out: string) {
   await writeFile(join(out, "real-model-plan.json"), JSON.stringify(plan, null, 2) + "\n", { flag: "wx" });
   const failures: string[] = [];
   // Oracle is read only by this evaluator after generation. It never enters the model payload or runner arguments.
+  for (const wanted of sample.expectedPlanningCoverage ?? []) {
+    if (plan.plan.coverage.find(item => item.requirementId === wanted.requirementId)?.status !== wanted.status) failures.push(`Planning destination differs from independent oracle: ${wanted.requirementId}/${wanted.status}`);
+  }
   const plannedSteps = plan.plan.criteria.flatMap(criterion => criterion.checks.flatMap(check => check.type === "http_sequence" ? check.steps : []));
   for (const wanted of sample.oracle) {
     if (!plannedSteps.some(step => step.method === wanted.method && oraclePathMatches(wanted.path, step.pathTemplate) && equal(step.body, wanted.body) && step.expectedStatus === wanted.expectedStatus &&
@@ -86,13 +92,16 @@ export async function runExternalEvaluation(out: string) {
     const observed = [];
     for (const id of run.evidenceIds) observed.push(await readExternalEvidence(dataDir, run.runId, id));
     if (run.verdict !== variant.expectedVerdict) failures.push(`${project.id}: expected ${variant.expectedVerdict}, observed ${run.verdict}`);
+    for (const [id, expected] of Object.entries(variant.expectedRequirements ?? {})) {
+      if (run.coverage.requirements.find(item => item.requirementId === id)?.verdict !== expected) failures.push(`${project.id}/${id}: requirement verdict differs from independent oracle ${expected}`);
+    }
     if (project.id === "correct") for (const wanted of sample.oracle) {
       if (!observed.some((item: any) => item.request.method === wanted.method && oraclePathMatches(wanted.path, new URL(item.request.url).pathname) && equal(item.request.body, wanted.body) && item.response?.status === wanted.expectedStatus && equal(pointer(item.response.body, wanted.pointer), wanted.equals))) failures.push(`Correct delivery lacks real oracle evidence: ${JSON.stringify(wanted)}`);
     }
     const restored = await readExternalRun(dataDir, run.runId);
     if (restored.verdict !== run.verdict) failures.push("Same-process readback mismatch");
     const row = { id: project.id, runId: run.runId, planRef: bound.planRef, projectRef: project.projectRef, verdict: run.verdict,
-      expectedVerdict: variant.expectedVerdict, evidenceIds: run.evidenceIds, targetSnapshotHash: run.targetSnapshotHash, runtime: run.runtime };
+      expectedVerdict: variant.expectedVerdict, evidenceIds: run.evidenceIds, targetSnapshotHash: run.targetSnapshotHash, runtime: run.runtime, coverage: run.coverage };
     results.push(row); console.log(JSON.stringify(row));
   }
   const summary = { schemaVersion: 1, completedAt: new Date().toISOString(), origin: sample.origin, caseId: sample.id, requirement: sample.requirement,

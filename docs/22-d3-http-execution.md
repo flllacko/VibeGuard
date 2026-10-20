@@ -69,6 +69,8 @@ node dist/cli.js project-evidence RUN_ID EVIDENCE_ID --data-dir DATA_DIR
 
 ## 证据保存和中断
 
+后续新增了逐要求、逐步骤的覆盖账目，区分计划、执行、前置条件和运行未完整结束的缺口，并显示缺少证据和下一步。它由已存材料计算，不是模型评分；详见 [覆盖缺口实测](24-coverage-gaps-and-evaluation.md)。
+
 `external-runs/RUN_ID/start.json` 保存当时的计划、来源要求及摘要。每个已经产生的观察立即写入 `observations/EVIDENCE_ID.json`；结束时关联运行器记录和已有 `planned-runs` 证据，写 `finish.json`。
 
 读取会核对摘要、运行/交付关系、观察编号、请求参数与原始响应字节。历史报告使用当时归档，不因后续源码或要求变化而冒充新版本通过，也不会因此失去旧证据。

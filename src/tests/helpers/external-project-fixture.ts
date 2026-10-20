@@ -11,7 +11,8 @@ import { ProjectProfileSchema } from "../../project-profile.js";
 import { prepareExternalProject } from "../../external-project.js";
 
 /** Synthetic original messages and approval, always labelled as such. No model or live host. */
-export async function prepareRuntimeFixture(directory: string, script: string, timeoutMs = 2000, options: { amendment?: string; quote?: string; dataDir?: string } = {}) {
+export async function prepareRuntimeFixture(directory: string, script: string, timeoutMs = 2000, options: { amendment?: string; quote?: string; dataDir?: string;
+  requirements?: { requirementId: string; quote: string }[] } = {}) {
   const dataDir = options.dataDir ?? join(directory, "data"), root = join(directory, "source");
   await mkdir(dataDir, { recursive: true }); await mkdir(root);
   await writeFile(join(root, "package.json"), JSON.stringify({ name: "synthetic-runtime-fixture", type: "module", private: true }));
@@ -28,10 +29,20 @@ export async function prepareRuntimeFixture(directory: string, script: string, t
     const path = join(directory, `${randomUUID()}.conversation.json`); await writeFile(path, JSON.stringify(conversation)); return registerTask(dataDir, path);
   };
   const original = await task(source);
+  const revisions = (options.requirements ?? [{ requirementId: "reachable-service", quote }]).map(item => {
+    const start = quote.indexOf(item.quote);
+    if (!/^[a-z][a-z0-9-]*$/.test(item.requirementId) || !item.quote || start < 0 || quote.indexOf(item.quote, start + 1) >= 0) throw new Error("Synthetic requirements need unique exact quotes");
+    return { requirementId: item.requirementId, revision: 1, status: "active" as const, normalized: item.quote, sourceKind: "explicit_user" as const,
+      sourceRefs: [{ messageId: "u1", start, end: start + item.quote.length, quote: item.quote }] };
+  });
+  if (!revisions.length || new Set(revisions.map(item => item.requirementId)).size !== revisions.length) throw new Error("Synthetic requirements must be nonempty and unique");
   const resolution: Resolution = { schemaVersion: 1, resolutionId: randomUUID(), taskId: source.taskId, createdAt: new Date().toISOString(), conversationSha256: original.conversationSha256,
-    transcriptCoverage: source.transcriptCoverage, coverageIssues: [], revisions: [{ requirementId: "reachable-service", revision: 1, status: "active", normalized: quote, sourceKind: "explicit_user",
-      sourceRefs: [{ messageId: "u1", start: 0, end: quote.length, quote }] }], dispositions: [{ messageId: "u1", kind: "requirements", reason: "Synthetic fixture" }],
-    interpretedUnits: intentUnits(source.messages).map(unit => ({ ...unit, kind: "requirement", requirementIds: ["reachable-service"], reason: "Synthetic fixture" })),
+    transcriptCoverage: source.transcriptCoverage, coverageIssues: [], revisions, dispositions: [{ messageId: "u1", kind: "requirements", reason: "Synthetic fixture" }],
+    interpretedUnits: intentUnits(source.messages).map(unit => {
+      const links = revisions.filter(item => item.sourceRefs.some(ref => unit.start < ref.end && unit.end > ref.start)).map(item => item.requirementId);
+      if (!links.length) throw new Error("Synthetic requirement split left text unaccounted");
+      return { ...unit, kind: "requirement", requirementIds: links, reason: "Synthetic fixture; not model extraction evidence" };
+    }),
     processing: [{ chunk: 1, messageIds: ["u1"], status: "processed", model: "fixture-no-api" }], unprocessedUserMessageIds: [], resolutionComplete: true };
   await saveResolution(resolution, dataDir);
   const draft = await createRequirementReview(dataDir, original.taskRef, resolution.resolutionId), fresh = structuredClone(source);

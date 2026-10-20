@@ -125,13 +125,14 @@ test("reusing stored plan content rebinds a changed delivery, records no new mod
 
 test("offline evaluation preview excludes delivery source, variant labels and independent oracle; preparing does not call a model", async () => temporary(async directory => {
   const sample = { schemaVersion: 1, id: "synthetic-offline", origin: "synthetic-developer-authored", requirement: "检查整数边界。", apiProfile: profile,
-    variants: ["correct", "faulty", "unavailable"].map(id => ({ id, script: "throw Error('PRIVATE_SOURCE_SENTINEL');", expectedVerdict: "UNVERIFIABLE" })),
+    expectedPlanningCoverage: [{ requirementId: "PRIVATE_PLANNING_ORACLE", status: "unverifiable" }],
+    variants: ["correct", "faulty", "unavailable"].map(id => ({ id, script: "throw Error('PRIVATE_SOURCE_SENTINEL');", expectedVerdict: "UNVERIFIABLE", expectedRequirements: { PRIVATE_VERDICT_ORACLE: "UNVERIFIABLE" } })),
     oracle: [1, 2].map(n => ({ method: "GET", path: "/health", expectedStatus: 200, pointer: "/private", equals: `PRIVATE_ORACLE_${n}` })) };
   const path = join(directory, "sample.json"), out = join(directory, "evaluation"); await writeFile(path, JSON.stringify(sample));
   const result = await prepareExternalEvaluation(path, out); assert.equal(result.modelCalls, 0);
   const outgoing = await readFile(join(out, "outgoing-input.json"), "utf8");
   assert.ok(outgoing.includes(sample.requirement));
-  for (const forbidden of ["PRIVATE_ORACLE", "PRIVATE_SOURCE", '"variants"', '"oracle"', '"expectedVerdict"']) assert.equal(outgoing.includes(forbidden), false);
+  for (const forbidden of ["PRIVATE_ORACLE", "PRIVATE_SOURCE", "PRIVATE_PLANNING_ORACLE", "PRIVATE_VERDICT_ORACLE", '"variants"', '"oracle"', '"expectedVerdict"']) assert.equal(outgoing.includes(forbidden), false);
   await assert.rejects(prepareExternalEvaluation(path, out), { code: "EEXIST" });
 }));
 
@@ -141,3 +142,17 @@ test("independent oracle accepts generated IDs and renamed capture variables whi
   for (const path of ["/records/", "/other/generated-123", "/records/generated-123/more", "/records"]) assert.equal(oraclePathMatches("/records/{id}", path), false);
   assert.equal(oraclePathMatches("/discount", "/discounts"), false);
 });
+
+test("offline multi-requirement fixtures retain exact split quotes and refuse unaccounted or invented source", async () => temporary(async directory => {
+  const { mkdir } = await import("node:fs/promises");
+  const root = join(directory, "valid"); await mkdir(root);
+  const fixture = await prepareRuntimeFixture(root, "// never executed", 2000, { quote: "读取状态。保留日志。", requirements: [
+    { requirementId: "read-status", quote: "读取状态。" }, { requirementId: "save-log", quote: "保留日志。" }] });
+  const material = await externalPlanInput(fixture.dataDir, fixture.project.projectRef, profile);
+  assert.deepEqual(material.modelInput.activeRequirements.map(item => item.requirementId), ["read-status", "save-log"]);
+  assert.deepEqual(material.modelInput.activeRequirements.map(item => item.sourceRefs[0]!.quote), ["读取状态。", "保留日志。"]);
+  for (const [id, quotes] of [["missing", ["读取状态。"]], ["invented", ["读取状态。", "编造来源。"]]] as const) {
+    const invalid = join(directory, id); await mkdir(invalid);
+    await assert.rejects(prepareRuntimeFixture(invalid, "// never executed", 2000, { quote: "读取状态。保留日志。", requirements: quotes.map((quote, n) => ({ requirementId: `requirement-${n}`, quote })) }), /unaccounted|unique exact quotes/);
+  }
+}));

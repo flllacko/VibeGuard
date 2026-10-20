@@ -8,6 +8,7 @@ import { HTTP_COLLECTOR, HttpCaptureSchema } from "./docker-http.js";
 import { checkExternalProjectRuntime } from "./docker-runtime.js";
 import { ExternalPlanRecordSchema, readExternalPlan } from "./external-plan.js";
 import { buildAcceptancePlan } from "./plan-review.js";
+import { buildHttpCoverage } from "./http-coverage.js";
 import { freezePlan } from "./planning.js";
 import { readPlannedRun, runFrozenPlan, savePlannedRun, type HttpStepEvidence } from "./plan-runner.js";
 import { ProjectHash } from "./project-profile.js";
@@ -95,7 +96,8 @@ export async function readExternalRun(dataDir: string, runId: string) {
     if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
     return { schemaVersion: 1, kind: "external-http-verification", runId, planRef: record.planRef, targetSnapshotHash: record.targetSnapshotHash,
       status: "incomplete", verdict: "UNVERIFIABLE" as const, reason: "没有完成记录；可能仍在运行或已被中断，不能据已有片段宣布通过。", acceptance,
-      evidenceIds: journal.map(item => item.evidenceId), observations: journal, journal, report: undefined, runtime: undefined, limitations: LIMITATIONS };
+      evidenceIds: journal.map(item => item.evidenceId), observations: journal, journal, report: undefined, runtime: undefined,
+      coverage: buildHttpCoverage(record.plan, resolution, journal, undefined, { complete: false, reason: "没有完成记录，可能仍在运行或已被中断。" }), limitations: LIMITATIONS };
   }
   if (finish.runId !== runId || finish.startSha256 !== sha256(JSON.stringify(start))) throw new Error("External run completion binding mismatch");
   const runtime = await readRuntimeReport(dataDir, finish.runtimeRunId), report = await readPlannedRun(dataDir, finish.plannedRunId);
@@ -130,7 +132,8 @@ export async function readExternalRun(dataDir: string, runId: string) {
     status: complete ? "completed" : "incomplete", verdict: complete ? report.verdict : "UNVERIFIABLE" as const,
     reason: complete ? "本次冻结计划已实际执行并保存证据；结论仅适用于列出的范围与交付。" : runtime.reason,
     acceptance, report, runtime: { runId: runtime.runId, status: runtime.status, stage: runtime.stage, cleanup: runtime.cleanup },
-    evidenceIds: [...expectedIds], observations: journal, journal: undefined, limitations: LIMITATIONS };
+    evidenceIds: [...expectedIds], observations: journal, journal: undefined,
+    coverage: buildHttpCoverage(record.plan, resolution, journal, report, { complete, reason: runtime.reason }), limitations: LIMITATIONS };
 }
 
 export async function readExternalEvidence(dataDir: string, runId: string, evidenceId: string) {
@@ -143,20 +146,27 @@ export async function readExternalEvidence(dataDir: string, runId: string, evide
 export function renderExternalRun(run: Awaited<ReturnType<typeof readExternalRun>>): string {
   const symbols = { VERIFIED: "✅ 已验证", FAILED: "❌ 验证失败", UNVERIFIABLE: "⚠ 无法验证" };
   const lines = [`# VibeGuard｜${symbols[run.verdict]}`, "", run.reason, ""];
+  const counts = run.coverage.counts;
+  lines.push(`要求：${counts.totalRequirements} 条；计划完整：${counts.fullyPlannedRequirements} 条；已验证：${counts.verifiedRequirements} 条；失败：${counts.failedRequirements} 条；无法验证：${counts.unverifiableRequirements} 条。`,
+    `计划步骤：${counts.plannedSteps}；已取得响应：${counts.responseSteps}。响应不等于检查通过，条目齐全不保证理解无遗漏。`, "");
   for (const requirement of run.acceptance.requirements) {
     const outcome = run.report?.requirements.find(item => item.requirementId === requirement.requirementId);
+    const diagnostic = run.coverage.requirements.find(item => item.requirementId === requirement.requirementId)!;
     lines.push(`## ${requirement.normalized}`, "", ...requirement.sourceRefs.flatMap(ref => ref.quote.split("\n").map(line => `> ${line}`)), "");
     for (const criterion of requirement.criteria) lines.push(`怎样算做到：${criterion.expected}`);
-    lines.push("", outcome ? `${symbols[outcome.verdict]}：${outcome.reason}` : "⚠ 无法验证：尚无完整执行结果", "");
+    lines.push("", outcome ? `${symbols[diagnostic.verdict]}：${outcome.reason}${diagnostic.verdict !== outcome.verdict ? "；但本次运行未完整结束，不能据此宣布已验证。" : ""}` : "⚠ 无法验证：尚无完整执行结果", "");
     if (outcome) for (const id of outcome.evidenceIds) lines.push(`证据：${id}`);
     if (outcome) for (const item of run.observations.filter(item => outcome.evidenceIds.includes(item.evidenceId))) {
       const compact = (value: unknown) => { const text = JSON.stringify(value); return text === undefined ? "" : text.length > 600 ? text.slice(0, 600) + "…（摘要截断，完整内容见证据）" : text; };
       lines.push(`实际观察：${item.request.method} ${new URL(item.request.url).pathname} ${compact(item.request.body)} → ${item.response ? `HTTP ${item.response.status} ${compact(item.response.body)}` : item.error ?? "未取得响应"}`);
     }
     if (requirement.gapReason) lines.push(`缺口：${requirement.gapReason}`);
+    const stages = { planning: "计划缺口", execution: "执行缺口", precondition: "前置条件缺口", lifecycle: "运行未完整结束" };
+    for (const gap of diagnostic.gaps) lines.push(`${stages[gap.stage]}：${gap.reason}`, ...gap.missingEvidence.map(item => `缺少证据：${item}`), `下一步：${gap.nextAction}`);
     lines.push("");
   }
   if (run.report) for (const criterion of run.report.criteria) for (const check of criterion.checks) lines.push(`${symbols[check.verdict]} ${check.checkId}：${check.reason}`);
+  for (const gap of run.coverage.lifecycleGaps) lines.push("", `运行缺口：${gap.reason}`, ...gap.missingEvidence.map(item => `缺少证据：${item}`), `下一步：${gap.nextAction}`);
   lines.push("", ...run.limitations.map(item => `范围限制：${item}`), "", `运行编号：${run.runId}`, `交付摘要：${run.targetSnapshotHash}`);
   return lines.join("\n");
 }

@@ -12,7 +12,7 @@ import { projectSnapshotDirectory } from "../project-snapshot.js";
 import { prepareRuntimeFixture } from "./helpers/external-project-fixture.js";
 import { createExternalPlan } from "../external-plan.js";
 import { ApiProfileSchema, type PlanGatewayOutput } from "../pi-plan-gateway.js";
-import { readExternalEvidence, readExternalRun, runExternalPlan } from "../external-runner.js";
+import { readExternalEvidence, readExternalRun, renderExternalRun, runExternalPlan } from "../external-runner.js";
 import { HTTP_COLLECTOR, dockerHttpTransport } from "../docker-http.js";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
@@ -152,6 +152,9 @@ test("external lifecycle with synthetic Docker saves three verdicts, actual-comm
     const docker = new FakeDocker(kind === "unavailable" ? "crash" : "ready");
     const run = await runExternalPlan(fixture.dataDir, plan.planRef, { client: docker });
     assert.equal(run.verdict, kind === "correct" ? "VERIFIED" : kind === "faulty" ? "FAILED" : "UNVERIFIABLE");
+    assert.equal(run.coverage.counts.responseSteps, kind === "unavailable" ? 0 : 1);
+    assert.equal(run.coverage.counts.verifiedRequirements, kind === "correct" ? 1 : 0);
+    if (kind === "unavailable") assert.equal(run.coverage.requirements[0]!.gaps[0]!.stage, "execution");
     const first = docker.calls.findIndex(call => call.args.includes(HTTP_COLLECTOR));
     const clean = docker.calls.findIndex(call => call.args[0] === "rm");
     if (kind !== "unavailable") {
@@ -165,6 +168,7 @@ test("external lifecycle with synthetic Docker saves three verdicts, actual-comm
     await writeFile(join(projectSnapshotDirectory(fixture.dataDir, fixture.project.snapshotRef), "files", "server.mjs"), "new source");
     const readback = await execute(process.execPath, ["dist/cli.js", "project-report", run.runId, "--format", "json", "--data-dir", fixture.dataDir]);
     assert.equal(JSON.parse(readback.stdout).verdict, run.verdict);
+    assert.deepEqual(JSON.parse(readback.stdout).coverage, run.coverage);
   }
 }));
 
@@ -177,6 +181,8 @@ test("external cleanup failures and unobserved preconditions cannot become verif
   const plain = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return syntheticPlan(); } });
   const failedCleanup = await runExternalPlan(fixture.dataDir, plain.planRef, { client: new FakeDocker("remove_failure") });
   assert.equal(failedCleanup.verdict, "UNVERIFIABLE"); assert.equal(failedCleanup.runtime!.cleanup.status, "incomplete");
+  const text = renderExternalRun(failedCleanup);
+  assert.match(text, /运行未完整结束/); assert.equal(text.includes("✅ 已验证："), false);
   const id = run.evidenceIds[0]!;
   await writeFile(join(fixture.dataDir, "external-runs", run.runId, "observations", `${id}.json`), "{}");
   await assert.rejects(readExternalRun(fixture.dataDir, run.runId));
@@ -189,6 +195,8 @@ test("missing completion record preserves journal evidence as incomplete, never 
   await rm(join(fixture.dataDir, "external-runs", run.runId, "finish.json"));
   const incomplete = await readExternalRun(fixture.dataDir, run.runId);
   assert.equal(incomplete.status, "incomplete"); assert.equal(incomplete.verdict, "UNVERIFIABLE"); assert.equal(incomplete.journal!.length, 1);
+  assert.equal(incomplete.coverage.counts.verifiedRequirements, 0); assert.equal(incomplete.coverage.counts.responseSteps, 1);
+  assert.equal(incomplete.coverage.lifecycleGaps[0]!.stage, "lifecycle");
   assert.equal((await readExternalEvidence(fixture.dataDir, run.runId, run.evidenceIds[0]!) as any).response.status, 200);
 }));
 

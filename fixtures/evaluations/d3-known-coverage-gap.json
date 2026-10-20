@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "id": "known-coverage-gap",
+  "origin": "synthetic-developer-authored",
+  "requirement": "实现整数换算接口：提交 value 为 8 时返回 HTTP 200 和 result 为 56；非负整数的 result 等于 value 乘以 7。提交负整数时返回 HTTP 422 和 error 为 NEGATIVE_VALUE，本轮检查 value 为 -3。每次成功换算须在独立审计系统保留一条包含输入和结果的记录，本轮也需要验收该记录是否真实保存。",
+  "confirmedRequirements": [
+    {"requirementId":"scale-value","quote":"实现整数换算接口：提交 value 为 8 时返回 HTTP 200 和 result 为 56；非负整数的 result 等于 value 乘以 7。"},
+    {"requirementId":"reject-negative","quote":"提交负整数时返回 HTTP 422 和 error 为 NEGATIVE_VALUE，本轮检查 value 为 -3。"},
+    {"requirementId":"audit-record","quote":"每次成功换算须在独立审计系统保留一条包含输入和结果的记录，本轮也需要验收该记录是否真实保存。"}
+  ],
+  "apiProfile": {
+    "schemaVersion": 1,
+    "profileId": "scale-http-contract",
+    "description": "隔离测试的 HTTP 契约，仅提供换算接口。没有审计服务地址、读取接口或数据库连接；当前运行工具只能调用此处列出的 HTTP 路由。响应示例只表示结构。",
+    "routes": [{
+      "method": "POST",
+      "pathTemplate": "/scale",
+      "description": "接收 JSON 对象 value（整数）。成功 HTTP 200，返回 JSON result（整数）；业务拒绝时返回 HTTP 422，JSON error（字符串）。",
+      "successStatus": 200,
+      "requestExample": {"value": 0},
+      "responseExample": {"result": 0}
+    }],
+    "isolationRules": []
+  },
+  "expectedPlanningCoverage": [
+    {"requirementId":"scale-value","status":"planned"},
+    {"requirementId":"reject-negative","status":"planned"},
+    {"requirementId":"audit-record","status":"unverifiable"}
+  ],
+  "variants": [
+    {
+      "id": "correct",
+      "script": "import http from 'node:http';http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');const send=(status,v)=>{res.statusCode=status;res.end(JSON.stringify(v))};if(req.url==='/health'){send(200,{ready:true});return}if(req.method!=='POST'||req.url!=='/scale'){send(404,{error:'NOT_FOUND'});return}let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{try{const value=JSON.parse(raw).value;if(!Number.isSafeInteger(value)){send(422,{error:'INVALID_INTEGER'});return}if(value<0){send(422,{error:'NEGATIVE_VALUE'});return}send(200,{result:value*7})}catch{send(400,{error:'INVALID_JSON'})}})}).listen(Number(process.env.PORT),'127.0.0.1');",
+      "expectedVerdict": "UNVERIFIABLE",
+      "expectedRequirements": {"scale-value":"VERIFIED","reject-negative":"VERIFIED","audit-record":"UNVERIFIABLE"}
+    },
+    {
+      "id": "faulty",
+      "script": "import http from 'node:http';http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');const send=(status,v)=>{res.statusCode=status;res.end(JSON.stringify(v))};if(req.url==='/health'){send(200,{ready:true});return}if(req.method!=='POST'||req.url!=='/scale'){send(404,{error:'NOT_FOUND'});return}let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{try{const value=JSON.parse(raw).value;if(!Number.isSafeInteger(value)){send(422,{error:'INVALID_INTEGER'});return}send(200,{result:value*7})}catch{send(400,{error:'INVALID_JSON'})}})}).listen(Number(process.env.PORT),'127.0.0.1');",
+      "expectedVerdict": "FAILED",
+      "expectedRequirements": {"scale-value":"VERIFIED","reject-negative":"FAILED","audit-record":"UNVERIFIABLE"}
+    },
+    {
+      "id": "unavailable",
+      "script": "console.error('Coverage-gap evaluation: intentional startup failure');process.exit(13);",
+      "expectedVerdict": "UNVERIFIABLE",
+      "expectedRequirements": {"scale-value":"UNVERIFIABLE","reject-negative":"UNVERIFIABLE","audit-record":"UNVERIFIABLE"}
+    }
+  ],
+  "oracle": [
+    {"method":"POST","path":"/scale","body":{"value":8},"expectedStatus":200,"pointer":"/result","equals":56},
+    {"method":"POST","path":"/scale","body":{"value":-3},"expectedStatus":422,"pointer":"/error","equals":"NEGATIVE_VALUE"}
+  ]
+}
