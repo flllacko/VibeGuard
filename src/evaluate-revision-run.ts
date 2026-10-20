@@ -5,8 +5,8 @@ import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import type { Conversation } from "./intake.js";
-import { createExternalPlan, externalPlanInput, reuseExternalPlan } from "./external-plan.js";
-import { prepareExternalProject } from "./external-project.js";
+import { createExternalPlan, externalPlanInput, readExternalPlan, reuseExternalPlan } from "./external-plan.js";
+import { prepareExternalProject, readExternalProject } from "./external-project.js";
 import { readExternalRun, renderExternalRun, runExternalPlan } from "./external-runner.js";
 import { ApiProfileSchema, PiPlanGateway } from "./pi-plan-gateway.js";
 import { PiReviewReplyGateway } from "./pi-review-reply-gateway.js";
@@ -68,7 +68,8 @@ export async function runRevisionEvaluation(out: string) {
     await event({ label, rejected: true, reason: failure instanceof Error ? failure.message : String(failure) });
   };
   const execute = async (id: string, planRef: string, expected: string) => {
-    const run = await runExternalPlan(dataDir, planRef);
+    const currentTaskRef = (await readExternalProject(dataDir, (await readExternalPlan(dataDir, planRef)).record.projectRef)).project.currentTaskRef;
+    const run = await runExternalPlan(dataDir, planRef, { currentTaskRef });
     await writeFile(join(out, `${id}-report.md`), renderExternalRun(run) + "\n", { flag: "wx" });
     runs.push({ id, runId: run.runId, verdict: run.verdict, evidenceIds: run.evidenceIds });
     await event({ id, planRef, runId: run.runId, verdict: run.verdict, expected });
@@ -97,7 +98,7 @@ export async function runRevisionEvaluation(out: string) {
     for (const text of sample.revision.expectedNormalized.includes) if (!normalized.includes(text)) throw new Error(`Revised meaning lacks oracle term ${text}`);
     for (const text of sample.revision.expectedNormalized.excludes) if (normalized.includes(text)) throw new Error(`Revised meaning retains obsolete oracle term ${text}`);
     let obsoleteDockerCalls = 0;
-    await reject("old-plan-after-revision", /superseded/, () => runExternalPlan(dataDir, original.planRef, { client: { async invoke() { obsoleteDockerCalls++; throw new Error("MUST_NOT_INVOKE_DOCKER"); } } }));
+    await reject("old-plan-after-revision", /superseded/, () => runExternalPlan(dataDir, original.planRef, { currentTaskRef: reply.task.taskRef, client: { async invoke() { obsoleteDockerCalls++; throw new Error("MUST_NOT_INVOKE_DOCKER"); } } }));
     if (obsoleteDockerCalls) throw new Error("Obsolete plan reached Docker before the revision guard");
     await event({ label: "old-plan-side-effects", dockerCalls: obsoleteDockerCalls });
     await reject("new-review-before-confirmation", /not been completely confirmed/, () => prepareExternalProject(dataDir, manifest.profilePath, changed.reviewRef, reply.task.taskRef));

@@ -85,7 +85,7 @@ async function main(): Promise<void> {
     console.log("External projects (preparation only): vibeguard project-prepare --profile FILE --review REVIEW_REF --current-task FRESH_TASK_REF\n                                    vibeguard project-inspect PROJECT_REF\nSaves a delivery copy and confirmed requirement binding; does not execute project code.");
     console.log("Docker runtime check: vibeguard project-runtime PROJECT_REF\n                      vibeguard runtime-report RUN_ID\nExplicitly starts the prepared copy in Docker, probes readiness and cleans it up. Readiness is not task acceptance.");
     console.log("External HTTP planning: vibeguard project-plan-input PROJECT_REF --api-profile FILE\n                        vibeguard project-plan PROJECT_REF --api-profile FILE [--provider ID] [--model ID]\n                        vibeguard project-plan-record PLAN_REF [--format json]\nInput preview and plan reading do not call the model or execute the project.");
-    console.log("External execution: vibeguard project-run PLAN_REF [--format json]\n                    vibeguard project-report RUN_ID [--format json]\n                    vibeguard project-evidence RUN_ID EVIDENCE_ID\nExecution starts the fixed delivery in Docker; report/evidence only read local records.");
+    console.log("External execution: vibeguard project-run PLAN_REF --current-task TASK_REF [--format json]\n                    vibeguard project-report RUN_ID [--format json]\n                    vibeguard project-evidence RUN_ID EVIDENCE_ID\nExecution requires an explicitly supplied independent conversation capture; unreviewed user messages block execution. Report/evidence only read local records.");
     console.log("Read-only files: vibeguard file-plan --resolution ID --profile FILE [--provider ID]\n                vibeguard register-task --task FILE --file-plan HASH --file-profile FILE\n                vibeguard verify-task TASK_REF");
     console.log("User setup (prints configuration only): vibeguard setup codex|claude-code [--format json] [--codex-bin PATH]");
     console.log("Connection wizard: vibeguard connect [codex|claude-code] [--dry-run | --yes]\n                   vibeguard doctor codex|claude-code\nNon-interactive connect previews only unless --yes is explicitly supplied.");
@@ -118,7 +118,7 @@ async function main(): Promise<void> {
       const controller = new AbortController(), cancel = () => controller.abort();
       if (command === "project-run") { process.once("SIGINT", cancel); process.once("SIGTERM", cancel); }
       try {
-        const run = command === "project-run" ? await runExternalPlan(dataDir, args[0], { signal: controller.signal }) : await readExternalRun(dataDir, args[0]);
+        const run = command === "project-run" ? await runExternalPlan(dataDir, args[0], { signal: controller.signal, currentTaskRef: option(args, "--current-task") }) : await readExternalRun(dataDir, args[0]);
         console.log(outputFormat(args) === "json" ? JSON.stringify(run, null, 2) : renderExternalRun(run));
         if (command === "project-run") process.exitCode = exitCode(run.verdict);
       } finally { process.removeListener("SIGINT", cancel); process.removeListener("SIGTERM", cancel); }

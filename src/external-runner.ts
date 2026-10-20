@@ -9,6 +9,7 @@ import { checkExternalProjectRuntime } from "./docker-runtime.js";
 import { ExternalPlanRecordSchema, readExternalPlan } from "./external-plan.js";
 import { buildAcceptancePlan } from "./plan-review.js";
 import { buildHttpCoverage } from "./http-coverage.js";
+import { checkExecutionCapture, ExecutionCaptureSchema, readArchivedExecutionCapture } from "./execution-capture.js";
 import { freezePlan } from "./planning.js";
 import { readPlannedRun, runFrozenPlan, savePlannedRun, type HttpStepEvidence } from "./plan-runner.js";
 import { ProjectHash } from "./project-profile.js";
@@ -17,7 +18,7 @@ import { readRuntimeReport } from "./runtime-store.js";
 import { sha256 } from "./storage.js";
 
 const StartSchema = z.object({ schemaVersion: z.literal(1), kind: z.literal("external-http-run-start"), runId: z.string().uuid(), startedAt: z.string().datetime(),
-  planRecord: ExternalPlanRecordSchema, resolution: z.unknown(),
+  planRecord: ExternalPlanRecordSchema, resolution: z.unknown(), executionCapture: ExecutionCaptureSchema.optional(),
 }).strict();
 const FinishSchema = z.object({ schemaVersion: z.literal(1), kind: z.literal("external-http-run-finish"), runId: z.string().uuid(), completedAt: z.string().datetime(),
   startSha256: ProjectHash, runtimeRunId: z.string().uuid(), runtimeReportSha256: ProjectHash, plannedRunId: z.string().uuid(), plannedReportSha256: ProjectHash,
@@ -40,23 +41,26 @@ const LIMITATIONS = [
 ];
 
 /** Explicit developer entry: a model/Agent can supply a plan reference, never a verdict or observation. */
-export async function runExternalPlan(dataDir: string, planRef: string, options: { client?: DockerClient; signal?: AbortSignal; maxDurationMs?: number } = {}) {
+export async function runExternalPlan(dataDir: string, planRef: string, options: { currentTaskRef?: string; client?: DockerClient; signal?: AbortSignal; maxDurationMs?: number } = {}) {
   const { record, resolution } = await readExternalPlan(dataDir, planRef);
+  const executionCapture = await checkExecutionCapture(dataDir, record, options.currentTaskRef);
   const checks = record.plan.criteria.flatMap(criterion => criterion.checks);
   if (checks.some(check => check.type !== "http_sequence") || checks.length > 40 || checks.reduce((n, check) => n + (check.type === "http_sequence" ? check.steps.length : 0), 0) > 80) throw new Error("External execution supports at most 40 HTTP checks and 80 steps");
   const runId = randomUUID(), root = directory(dataDir, runId);
   await mkdir(join(root, "observations"), { recursive: true });
-  const start = StartSchema.parse({ schemaVersion: 1, kind: "external-http-run-start", runId, startedAt: new Date().toISOString(), planRecord: record, resolution });
+  const start = StartSchema.parse({ schemaVersion: 1, kind: "external-http-run-start", runId, startedAt: new Date().toISOString(), planRecord: record, resolution, executionCapture });
   await sealedWrite(join(root, "start.json"), start);
   let executed: Awaited<ReturnType<typeof runFrozenPlan>> | undefined;
   const onEvidence = async (item: HttpStepEvidence) => { await sealedWrite(join(root, "observations", `${item.evidenceId}.json`), item); };
   const runtime = await checkExternalProjectRuntime(dataDir, record.projectRef, { client: options.client, signal: options.signal, async onReady(session) {
     const before = await readExternalPlan(dataDir, planRef);
     if (before.record.recordHash !== record.recordHash) throw new Error("External plan changed before execution");
+    await checkExecutionCapture(dataDir, record, options.currentTaskRef);
     executed = await runFrozenPlan(record.plan, resolution, `http://127.0.0.1:${session.port}`, "固定交付在 Docker 中实际执行", record.targetSnapshotHash, record.apiProfile,
       { transport: session.request, signal: options.signal, maxDurationMs: options.maxDurationMs, requireObservedPreconditions: true, onEvidence, limitations: LIMITATIONS });
     const after = await readExternalPlan(dataDir, planRef);
     if (after.record.recordHash !== record.recordHash) throw new Error("External plan changed during execution");
+    await checkExecutionCapture(dataDir, record, options.currentTaskRef);
     options.signal?.throwIfAborted();
   } });
   if (!executed) executed = await runFrozenPlan(record.plan, resolution, "http://127.0.0.1", "功能步骤未能开始", record.targetSnapshotHash, record.apiProfile,
@@ -79,6 +83,7 @@ export async function readExternalRun(dataDir: string, runId: string) {
   const frozen = freezePlan(resolution, { criteria: record.plan.criteria, coverage: record.plan.coverage }, record.plan.source);
   if (frozen.planHash !== record.plan.planHash || record.plan.resolutionId !== record.reviewRef || resolution.conversationSha256 !== record.checkedConversationSha256) throw new Error("Archived planning binding mismatch");
   const acceptance = buildAcceptancePlan(record.plan, resolution);
+  const captureCheck = await readArchivedExecutionCapture(dataDir, record, start.executionCapture);
   const names = await readdir(join(root, "observations"));
   if (names.length > 80) throw new Error("Unexpected observation count");
   const journal: HttpStepEvidence[] = [];
@@ -95,7 +100,7 @@ export async function readExternalRun(dataDir: string, runId: string) {
   catch (error) {
     if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
     return { schemaVersion: 1, kind: "external-http-verification", runId, planRef: record.planRef, targetSnapshotHash: record.targetSnapshotHash,
-      status: "incomplete", verdict: "UNVERIFIABLE" as const, reason: "没有完成记录；可能仍在运行或已被中断，不能据已有片段宣布通过。", acceptance,
+      status: "incomplete", verdict: "UNVERIFIABLE" as const, reason: "没有完成记录；可能仍在运行或已被中断，不能据已有片段宣布通过。", acceptance, captureCheck,
       evidenceIds: journal.map(item => item.evidenceId), observations: journal, journal, report: undefined, runtime: undefined,
       coverage: buildHttpCoverage(record.plan, resolution, journal, undefined, { complete: false, reason: "没有完成记录，可能仍在运行或已被中断。" }), limitations: LIMITATIONS };
   }
@@ -131,7 +136,7 @@ export async function readExternalRun(dataDir: string, runId: string) {
   return { schemaVersion: 1, kind: "external-http-verification", runId, planRef: record.planRef, targetSnapshotHash: record.targetSnapshotHash,
     status: complete ? "completed" : "incomplete", verdict: complete ? report.verdict : "UNVERIFIABLE" as const,
     reason: complete ? "本次冻结计划已实际执行并保存证据；结论仅适用于列出的范围与交付。" : runtime.reason,
-    acceptance, report, runtime: { runId: runtime.runId, status: runtime.status, stage: runtime.stage, cleanup: runtime.cleanup },
+    acceptance, report, captureCheck, runtime: { runId: runtime.runId, status: runtime.status, stage: runtime.stage, cleanup: runtime.cleanup },
     evidenceIds: [...expectedIds], observations: journal, journal: undefined,
     coverage: buildHttpCoverage(record.plan, resolution, journal, report, { complete, reason: runtime.reason }), limitations: LIMITATIONS };
 }
@@ -146,6 +151,7 @@ export async function readExternalEvidence(dataDir: string, runId: string, evide
 export function renderExternalRun(run: Awaited<ReturnType<typeof readExternalRun>>): string {
   const symbols = { VERIFIED: "✅ 已验证", FAILED: "❌ 验证失败", UNVERIFIABLE: "⚠ 无法验证" };
   const lines = [`# VibeGuard｜${symbols[run.verdict]}`, "", run.reason, ""];
+  lines.push(run.captureCheck.status === "checked_at_capture" ? `对话核对：${run.captureCheck.taskRef}（${run.captureCheck.conversationSha256}）` : "对话核对：历史记录未登记执行时快照", run.captureCheck.meaning, "");
   const counts = run.coverage.counts;
   lines.push(`要求：${counts.totalRequirements} 条；计划完整：${counts.fullyPlannedRequirements} 条；已验证：${counts.verifiedRequirements} 条；失败：${counts.failedRequirements} 条；无法验证：${counts.unverifiableRequirements} 条。`,
     `计划步骤：${counts.plannedSteps}；已取得响应：${counts.responseSteps}。响应不等于检查通过，条目齐全不保证理解无遗漏。`, "");

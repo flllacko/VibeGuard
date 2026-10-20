@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { test } from "node:test";
@@ -13,7 +13,7 @@ import { prepareRuntimeFixture } from "./helpers/external-project-fixture.js";
 import { createExternalPlan, readExternalPlan, reuseExternalPlan } from "../external-plan.js";
 import { prepareExternalProject } from "../external-project.js";
 import { registerEvaluationReply } from "../evaluate-revision-run.js";
-import { readTask } from "../task-registry.js";
+import { readTask, registerTask } from "../task-registry.js";
 import { readTaskIntake } from "../task-scope.js";
 import { applyRequirementReviewReply, readRequirementReview } from "../requirement-review.js";
 import { ApiProfileSchema, type PlanGatewayOutput } from "../pi-plan-gateway.js";
@@ -155,7 +155,7 @@ test("external lifecycle with synthetic Docker saves three verdicts, actual-comm
     const fixture = await prepareRuntimeFixture(root, "// synthetic unit-test delivery");
     const plan = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return syntheticPlan(kind === "faulty"); } });
     const docker = new FakeDocker(kind === "unavailable" ? "crash" : "ready");
-    const run = await runExternalPlan(fixture.dataDir, plan.planRef, { client: docker });
+    const run = await runExternalPlan(fixture.dataDir, plan.planRef, { currentTaskRef: fixture.project.currentTaskRef, client: docker });
     assert.equal(run.verdict, kind === "correct" ? "VERIFIED" : kind === "faulty" ? "FAILED" : "UNVERIFIABLE");
     assert.equal(run.coverage.counts.responseSteps, kind === "unavailable" ? 0 : 1);
     assert.equal(run.coverage.counts.verifiedRequirements, kind === "correct" ? 1 : 0);
@@ -181,10 +181,10 @@ test("external cleanup failures and unobserved preconditions cannot become verif
   const fixture = await prepareRuntimeFixture(directory, "// synthetic");
   const output = syntheticPlan(); output.proposal.criteria[0]!.preconditions = ["一个尚未核对的条件"];
   const plan = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return output; } });
-  const run = await runExternalPlan(fixture.dataDir, plan.planRef, { client: new FakeDocker() });
+  const run = await runExternalPlan(fixture.dataDir, plan.planRef, { currentTaskRef: fixture.project.currentTaskRef, client: new FakeDocker() });
   assert.equal(run.verdict, "UNVERIFIABLE"); assert.match(run.report!.requirements[0]!.reason, /前置条件/);
   const plain = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return syntheticPlan(); } });
-  const failedCleanup = await runExternalPlan(fixture.dataDir, plain.planRef, { client: new FakeDocker("remove_failure") });
+  const failedCleanup = await runExternalPlan(fixture.dataDir, plain.planRef, { currentTaskRef: fixture.project.currentTaskRef, client: new FakeDocker("remove_failure") });
   assert.equal(failedCleanup.verdict, "UNVERIFIABLE"); assert.equal(failedCleanup.runtime!.cleanup.status, "incomplete");
   const text = renderExternalRun(failedCleanup);
   assert.match(text, /运行未完整结束/); assert.equal(text.includes("✅ 已验证："), false);
@@ -193,17 +193,72 @@ test("external cleanup failures and unobserved preconditions cannot become verif
   await assert.rejects(readExternalRun(fixture.dataDir, run.runId));
 }));
 
+test("execution capture is mandatory; unreviewed messages block core and CLI before runtime effects even while the old plan is valid", async () => temporary(async directory => {
+  const fixture = await prepareRuntimeFixture(directory, "// no host execution");
+  const plan = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return syntheticPlan(); } });
+  const review = await readRequirementReview(fixture.dataDir, fixture.project.reviewRef);
+  const original = await readTaskIntake(fixture.dataDir, await readTask(fixture.dataDir, fixture.project.currentTaskRef));
+  const unreviewed = await registerEvaluationReply(fixture.dataDir, original.conversation, review, "现在改成新的行为，还未审查", join(directory, "unreviewed.json"));
+  assert.equal((await readExternalPlan(fixture.dataDir, plan.planRef)).record.planRef, plan.planRef);
+  const docker = new FakeDocker();
+  await assert.rejects(runExternalPlan(fixture.dataDir, plan.planRef, { client: docker }), /必须提供本次独立采集/);
+  await assert.rejects(runExternalPlan(fixture.dataDir, plan.planRef, { currentTaskRef: unreviewed.task.taskRef, client: docker }), /New user messages require review/);
+  assert.equal(docker.calls.length, 0);
+  await assert.rejects(readdir(join(fixture.dataDir, "external-runs")), { code: "ENOENT" });
+  for (const supplied of [false, true]) {
+    const args = ["dist/cli.js", "project-run", plan.planRef, "--data-dir", fixture.dataDir];
+    if (supplied) args.push("--current-task", unreviewed.task.taskRef);
+    await assert.rejects(execute(process.execPath, args), (error: any) => supplied ? /New user messages require review/.test(error.stderr) : /必须提供本次独立采集/.test(error.stderr));
+  }
+  assert.equal((await readExternalPlan(fixture.dataDir, plan.planRef)).record.planRef, plan.planRef);
+}));
+
+test("same-session assistant-only capture is archived; different sessions, rewritten history, attachments and summaries are rejected", async () => temporary(async directory => {
+  const fixture = await prepareRuntimeFixture(directory, "// synthetic capture identity checks");
+  const plan = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return syntheticPlan(); } });
+  const original = await readTaskIntake(fixture.dataDir, await readTask(fixture.dataDir, fixture.project.currentTaskRef));
+  const latest = structuredClone(original.conversation);
+  latest.messages.push({ id: "delivery", sequence: latest.messages.length + 1, role: "assistant", text: "已交付，等待验收。" });
+  latest.taskBoundary.endMessageId = "delivery";
+  const register = async (value: typeof latest, name: string) => {
+    const path = join(directory, `${name}.json`); await writeFile(path, JSON.stringify(value)); return registerTask(fixture.dataDir, path);
+  };
+  const other = structuredClone(latest); other.sessionId = "other-session";
+  const prefix = structuredClone(latest); prefix.messages[0]!.text = "改写旧原话";
+  const summary = structuredClone(latest); summary.transcriptCoverage.source = "agent_summary";
+  const attachment = structuredClone(latest); attachment.materialGaps = [{ kind: "unparsed_user_content", messageIds: ["u1"], detail: "新增未解析附件" }];
+  const missing = structuredClone(latest); missing.transcriptCoverage.missingMessageIds = ["not-captured"];
+  const docker = new FakeDocker();
+  for (const [index, invalid] of [other, prefix, summary, attachment, missing].entries()) {
+    const source = await register(invalid, `invalid-${index}`);
+    await assert.rejects(runExternalPlan(fixture.dataDir, plan.planRef, { currentTaskRef: source.taskRef, client: docker }));
+  }
+  assert.equal(docker.calls.length, 0);
+  const registered = await register(latest, "latest");
+  const run = await runExternalPlan(fixture.dataDir, plan.planRef, { currentTaskRef: registered.taskRef, client: docker });
+  assert.equal(run.verdict, "VERIFIED"); assert.equal(run.captureCheck.status, "checked_at_capture");
+  if (run.captureCheck.status !== "checked_at_capture") throw Error("Missing capture receipt");
+  assert.equal(run.captureCheck.taskRef, registered.taskRef); assert.equal(run.captureCheck.conversationSha256, registered.conversationSha256);
+  assert.notEqual(run.captureCheck.conversationSha256, plan.checkedConversationSha256);
+  const readback = await execute(process.execPath, ["dist/cli.js", "project-report", run.runId, "--format", "json", "--data-dir", fixture.dataDir]);
+  assert.deepEqual(JSON.parse(readback.stdout).captureCheck, run.captureCheck);
+  const stored = join(fixture.dataDir, "conversations", `${registered.conversationSha256}.json`), bytes = await readFile(stored);
+  await writeFile(stored, "{}"); await assert.rejects(readExternalRun(fixture.dataDir, run.runId));
+  await writeFile(stored, bytes);
+  assert.equal((await readExternalRun(fixture.dataDir, run.runId)).verdict, "VERIFIED");
+}));
+
 test("review revisions block old plans before any Docker call, require reconfirmation, and preserve archived results", async () => temporary(async directory => {
   const fixture = await prepareRuntimeFixture(directory, "// synthetic revision test, not live business evidence");
   const oldPlan = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return syntheticPlan(); } });
-  const oldRun = await runExternalPlan(fixture.dataDir, oldPlan.planRef, { client: new FakeDocker() });
+  const oldRun = await runExternalPlan(fixture.dataDir, oldPlan.planRef, { currentTaskRef: fixture.project.currentTaskRef, client: new FakeDocker() });
   const review = await readRequirementReview(fixture.dataDir, fixture.project.reviewRef);
   const intake = await readTaskIntake(fixture.dataDir, await readTask(fixture.dataDir, fixture.project.currentTaskRef));
   const revision = await registerEvaluationReply(fixture.dataDir, intake.conversation, review, "第1条改成：读取并核对服务状态", join(directory, "revision.json"));
   const changed = await applyRequirementReviewReply(fixture.dataDir, revision.task.taskRef, { reviewRef: review.reviewRef });
   assert.equal(changed.status, "awaiting_review"); assert.equal(changed.confirmation, undefined);
   const untouched = new FakeDocker();
-  await assert.rejects(runExternalPlan(fixture.dataDir, oldPlan.planRef, { client: untouched }), /superseded/);
+  await assert.rejects(runExternalPlan(fixture.dataDir, oldPlan.planRef, { currentTaskRef: revision.task.taskRef, client: untouched }), /superseded/);
   assert.equal(untouched.calls.length, 0);
   let modelCalls = 0;
   await assert.rejects(createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { modelCalls++; return syntheticPlan(); } }), /superseded/);
@@ -228,7 +283,7 @@ test("a requirement change during HTTP execution prevents a verified result and 
   const review = await readRequirementReview(fixture.dataDir, fixture.project.reviewRef);
   const intake = await readTaskIntake(fixture.dataDir, await readTask(fixture.dataDir, fixture.project.currentTaskRef));
   const docker = new FakeDocker(); let revisions = 0;
-  const run = await runExternalPlan(fixture.dataDir, plan.planRef, { client: { async invoke(args, options) {
+  const run = await runExternalPlan(fixture.dataDir, plan.planRef, { currentTaskRef: fixture.project.currentTaskRef, client: { async invoke(args, options) {
     const observed = await docker.invoke(args, options);
     if (args.includes(HTTP_COLLECTOR) && revisions++ === 0) {
       const fresh = await registerEvaluationReply(fixture.dataDir, intake.conversation, review, "第1条改成：重新核对服务状态", join(directory, "during-execution.json"));
@@ -245,7 +300,7 @@ test("a requirement change during HTTP execution prevents a verified result and 
 test("missing completion record preserves journal evidence as incomplete, never passed", async () => temporary(async directory => {
   const fixture = await prepareRuntimeFixture(directory, "// synthetic");
   const plan = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return syntheticPlan(); } });
-  const run = await runExternalPlan(fixture.dataDir, plan.planRef, { client: new FakeDocker() });
+  const run = await runExternalPlan(fixture.dataDir, plan.planRef, { currentTaskRef: fixture.project.currentTaskRef, client: new FakeDocker() });
   await rm(join(fixture.dataDir, "external-runs", run.runId, "finish.json"));
   const incomplete = await readExternalRun(fixture.dataDir, run.runId);
   assert.equal(incomplete.status, "incomplete"); assert.equal(incomplete.verdict, "UNVERIFIABLE"); assert.equal(incomplete.journal!.length, 1);
@@ -262,7 +317,7 @@ test("cancellation after an observation preserves evidence and cleans resources;
   check.steps.push({ ...check.steps[0]!, stepId: "second" });
   const plan = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return output; } });
   const controller = new AbortController(), docker = new FakeDocker();
-  const run = await runExternalPlan(fixture.dataDir, plan.planRef, { signal: controller.signal, client: { async invoke(args, options) {
+  const run = await runExternalPlan(fixture.dataDir, plan.planRef, { currentTaskRef: fixture.project.currentTaskRef, signal: controller.signal, client: { async invoke(args, options) {
     const response = await docker.invoke(args, options);
     if (args.includes(HTTP_COLLECTOR)) controller.abort();
     return response;

@@ -8,6 +8,8 @@ VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证
 
 已真实实测**要求修订后重新验收**：登记改口后旧计划被拦截，新版要求再次确认并规划；旧交付失败，修复交付复验通过，旧报告仍可读。原始要求和确认是合成测试材料，不等于平台已自动跟踪所有新消息。见 [修订复验与当前边界](docs/25-revision-reverification.md)。
 
+新执行现在必须提供**本次对话快照**，有未审查的新用户消息就先停止；报告保存核对过的采集编号。它不能自行证明调用方给的是实时最新历史，宿主自动传入仍待接线。见 [执行前核对与实测](docs/26-execution-capture-check.md)。
+
 新增**长聊天范围确认原型**：新采集的 Codex 文字历史先提议本次阶段及相关前文，用户选择后重新采集真实确认，再整理要求。选择不补齐图片或缺页，也不代表功能通过。见 [范围选择与使用说明](docs/13-task-scope-and-confirmation.md)。
 
 已确认任务仅前文附件未解析时，可以先输出**可读文字候选**，保留图片、语义待定及执行证据缺口。真实 S1 已整理出 3 条候选并在原聊天读回，整体仍无法验证。见 [部分材料处理实测](docs/14-partial-material-requirements.md)。
@@ -117,7 +119,7 @@ node dist/cli.js project-runtime PROJECT_REF
 node dist/cli.js runtime-report RUN_ID
 ```
 
-以上命令支持 `--data-dir PATH`。记录实际就绪请求、日志、退出和清理；正常就绪仍是任务“无法验证”，不能证明功能完成。MCP 外部项目查询仍为准备状态，动态功能验收与 `.exe` 尚待后续阶段。详见 [Docker 运行说明](docs/19-docker-runtime.md)。
+以上命令支持 `--data-dir PATH`。记录实际就绪请求、日志、退出和清理；正常就绪仍是任务“无法验证”，不能证明功能完成。MCP 外部项目查询仍为准备状态，实际 HTTP 功能检查由下述 D3 开发入口执行；`.exe` 尚未交付。详见 [Docker 运行说明](docs/19-docker-runtime.md)。
 
 ### 外部项目验收规划（D3 第一步）
 
@@ -125,7 +127,7 @@ node dist/cli.js runtime-report RUN_ID
 
 ### 实际执行外部 HTTP 计划（D3）
 
-`node dist/cli.js project-run PLAN_REF` 在容器就绪后执行冻结计划，逐步保存真实请求响应，再清理资源。`project-report RUN_ID` 展示原话、结论和实际观察，`project-evidence RUN_ID EVIDENCE_ID` 展开原始证据；均支持 `--data-dir PATH`。报告/证据读回无需模型或 Docker。
+`node dist/cli.js project-run PLAN_REF --current-task TASK_REF` 先核对本次采集与已确认要求，再在容器就绪后执行冻结计划，逐步保存真实请求响应并清理资源。未审查的新用户消息会阻断执行。`project-report RUN_ID` 展示原话、结论和实际观察，`project-evidence RUN_ID EVIDENCE_ID` 展开原始证据；均支持 `--data-dir PATH`。报告/证据读回无需模型或 Docker。
 
 用户本轮新任务已通过一次真实 Flash 规划，在正确、缺陷、不可用三份容器交付得到三态，原进程结束后读回成功。当前支持范围、自己复验命令及未执行项见 [D3 实测说明](docs/22-d3-http-execution.md)。这不代表原聊天 MCP 自动执行或任意依赖项目已支持。
 

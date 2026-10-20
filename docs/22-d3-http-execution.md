@@ -58,12 +58,12 @@ node dist/cli.js project-evidence d2ba9812-213b-482d-af8b-35b3704541cd 479959ff-
 正常开发使用：
 
 ```powershell
-node dist/cli.js project-run PLAN_REF --data-dir DATA_DIR
+node dist/cli.js project-run PLAN_REF --current-task TASK_REF --data-dir DATA_DIR
 node dist/cli.js project-report RUN_ID --data-dir DATA_DIR
 node dist/cli.js project-evidence RUN_ID EVIDENCE_ID --data-dir DATA_DIR
 ```
 
-`project-run` 启动交付并执行；另外两项只读本地记录，不调用模型或 Docker。退出码沿用三态规则：已验证 0、失败 1、无法验证 2。
+`project-run` 现在须显式提供本次独立采集编号，核对后才启动交付；新增用户消息尚未审查时先拒绝。见 [后续快照检查](26-execution-capture-check.md)。另外两项只读本地记录，不调用模型或 Docker。退出码沿用三态规则：已验证 0、失败 1、无法验证 2；入口参数或材料拒绝不产生通过结论。
 
 本机原始资料位于 `.vibeguard/evaluations/d3-user-230-20261020-first/`：`summary.json`、三份 `*-report.md`、`outgoing-review.md`、`real-model-plan.json`、`restarted-readback.json`、实现前后摘要及 `data/`。此目录被 Git 忽略，不随源码提交。
 

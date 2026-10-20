@@ -11,6 +11,7 @@ import { ApiProfileSchema, PiPlanGateway } from "./pi-plan-gateway.js";
 import { selectModel } from "./model-selection.js";
 import { sha256 } from "./storage.js";
 import { prepareRuntimeFixture } from "./tests/helpers/external-project-fixture.js";
+import { readExternalProject } from "./external-project.js";
 
 const CaseSchema = z.object({ schemaVersion: z.literal(1), id: z.string().regex(/^[a-z][a-z0-9-]*$/),
   requirement: z.string().min(1), origin: z.enum(["user-provided", "synthetic-developer-authored"]), apiProfile: ApiProfileSchema,
@@ -87,7 +88,7 @@ export async function runExternalEvaluation(out: string) {
     const variant = sample.variants.find(item => item.id === project.id)!;
     const bound = project.id === "correct" ? plan : await reuseExternalPlan(dataDir, plan.planRef, project.projectRef);
     if (!equal({ criteria: bound.plan.criteria, coverage: bound.plan.coverage }, { criteria: plan.plan.criteria, coverage: plan.plan.coverage })) throw new Error("Plan content changed across variants");
-    const run = await runExternalPlan(dataDir, bound.planRef);
+    const run = await runExternalPlan(dataDir, bound.planRef, { currentTaskRef: (await readExternalProject(dataDir, bound.projectRef)).project.currentTaskRef });
     await writeFile(join(out, `${project.id}-report.md`), renderExternalRun(run) + "\n", { flag: "wx" });
     const observed = [];
     for (const id of run.evidenceIds) observed.push(await readExternalEvidence(dataDir, run.runId, id));
