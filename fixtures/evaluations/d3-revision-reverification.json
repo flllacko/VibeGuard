@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "revision-reverification",
+  "origin": "synthetic-developer-authored",
+  "initial": {
+    "requirement": "实现文本格式化接口，接收 JSON text，把英文字母转成大写，HTTP 200 返回 JSON text。本轮必须检查输入 MiXeD 得到 MIXED，以及输入 blue sky 得到 BLUE SKY。",
+    "script": "import http from 'node:http';http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');const send=(code,v)=>{res.statusCode=code;res.end(JSON.stringify(v))};if(req.url==='/health'){send(200,{ready:true});return}if(req.method!=='POST'||req.url!=='/format'){send(404,{error:'NOT_FOUND'});return}let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{try{const {text}=JSON.parse(raw);if(typeof text!=='string'){send(422,{error:'INVALID_TEXT'});return}send(200,{text:text.toUpperCase()})}catch{send(400,{error:'INVALID_JSON'})}})}).listen(Number(process.env.PORT),'127.0.0.1');",
+    "oracle": [
+      {"method":"POST","path":"/format","body":{"text":"MiXeD"},"expectedStatus":200,"pointer":"/text","equals":"MIXED"},
+      {"method":"POST","path":"/format","body":{"text":"blue sky"},"expectedStatus":200,"pointer":"/text","equals":"BLUE SKY"}
+    ]
+  },
+  "revision": {
+    "reply": "输出改成全小写，MiXeD 应该变成 mixed，blue sky 应该变成 blue sky。其他接口格式不变。",
+    "expectedNormalized": {"includes":["小写"],"excludes":["大写","MIXED","BLUE SKY"]},
+    "oracle": [
+      {"method":"POST","path":"/format","body":{"text":"MiXeD"},"expectedStatus":200,"pointer":"/text","equals":"mixed"},
+      {"method":"POST","path":"/format","body":{"text":"blue sky"},"expectedStatus":200,"pointer":"/text","equals":"blue sky"}
+    ]
+  },
+  "updatedScript": "import http from 'node:http';http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');const send=(code,v)=>{res.statusCode=code;res.end(JSON.stringify(v))};if(req.url==='/health'){send(200,{ready:true});return}if(req.method!=='POST'||req.url!=='/format'){send(404,{error:'NOT_FOUND'});return}let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{try{const {text}=JSON.parse(raw);if(typeof text!=='string'){send(422,{error:'INVALID_TEXT'});return}send(200,{text:text.toLowerCase()})}catch{send(400,{error:'INVALID_JSON'})}})}).listen(Number(process.env.PORT),'127.0.0.1');",
+  "apiProfile": {
+    "schemaVersion": 1,
+    "profileId": "format-http-contract",
+    "description": "本地隔离字符串处理 HTTP 接口。具体转换行为来自当前要求，示例仅表示 JSON 结构。",
+    "routes": [{"method":"POST","pathTemplate":"/format","description":"接收 JSON text（字符串），成功 HTTP 200，JSON text（字符串）。不规定大小写转换规则。","successStatus":200,"requestExample":{"text":"example"},"responseExample":{"text":"example"}}],
+    "isolationRules": []
+  }
+}
