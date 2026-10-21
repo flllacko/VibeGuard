@@ -145,7 +145,8 @@ test("noninteractive connect only previews unless explicitly authorized; doctor 
     const doctor = await checkConnection("codex", f);
     assert.equal(doctor.status, "needs_host_check");
     assert.equal(doctor.checks.find(check => check.name === "工具连接")!.status, "passed");
-    for (const name of ["当前对话采集", "项目读取", "证据保存与读回"]) assert.equal(doctor.checks.find(check => check.name === name)!.status, "pending");
+    assert.equal(doctor.checks.find(check => check.name === "外部验收接口")!.status, "passed");
+    for (const name of ["平台实际加载版本", "当前对话采集", "项目读取", "证据保存与读回"]) assert.equal(doctor.checks.find(check => check.name === name)!.status, "pending");
     assert.doesNotMatch(JSON.stringify(doctor), /sk-[A-Za-z0-9]/);
   } finally { await cleanup(f.directory); }
 });

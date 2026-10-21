@@ -22,6 +22,8 @@ VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证
 
 ## 统一接入向导
 
+`doctor` 现检查新进程的外部验收参数与只读版本资源，并单列“平台实际加载版本”。构建更新后，平台中的旧连接仍可能需要重载；不要通过上传聊天来试版本。实测与排查见[原生连接核对](docs/28-native-connection-audit.md)。
+
 当前源码原型完成 `pnpm install`、`pnpm build` 后，Windows 可双击 **connect.cmd**，或运行：
 
 ```powershell
