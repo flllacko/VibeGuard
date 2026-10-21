@@ -17,7 +17,7 @@ import { readTask, registerTask } from "../task-registry.js";
 import { readTaskIntake } from "../task-scope.js";
 import { applyRequirementReviewReply, readRequirementReview } from "../requirement-review.js";
 import { ApiProfileSchema, type PlanGatewayOutput } from "../pi-plan-gateway.js";
-import { readExternalEvidence, readExternalRun, renderExternalRun, runExternalPlan } from "../external-runner.js";
+import { externalRequirementOutcomes, readExternalEvidence, readExternalRun, renderExternalRun, runExternalPlan } from "../external-runner.js";
 import { HTTP_COLLECTOR, dockerHttpTransport } from "../docker-http.js";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
@@ -186,6 +186,7 @@ test("external cleanup failures and unobserved preconditions cannot become verif
   const plain = await createExternalPlan(fixture.dataDir, fixture.project.projectRef, api, { async propose() { return syntheticPlan(); } });
   const failedCleanup = await runExternalPlan(fixture.dataDir, plain.planRef, { currentTaskRef: fixture.project.currentTaskRef, client: new FakeDocker("remove_failure") });
   assert.equal(failedCleanup.verdict, "UNVERIFIABLE"); assert.equal(failedCleanup.runtime!.cleanup.status, "incomplete");
+  assert.equal(externalRequirementOutcomes(failedCleanup)[0]!.verdict, "UNVERIFIABLE"); assert.match(externalRequirementOutcomes(failedCleanup)[0]!.reason, /运行未完整结束/);
   const text = renderExternalRun(failedCleanup);
   assert.match(text, /运行未完整结束/); assert.equal(text.includes("✅ 已验证："), false);
   const id = run.evidenceIds[0]!;
@@ -306,6 +307,7 @@ test("missing completion record preserves journal evidence as incomplete, never 
   assert.equal(incomplete.status, "incomplete"); assert.equal(incomplete.verdict, "UNVERIFIABLE"); assert.equal(incomplete.journal!.length, 1);
   assert.equal(incomplete.coverage.counts.verifiedRequirements, 0); assert.equal(incomplete.coverage.counts.responseSteps, 1);
   assert.equal(incomplete.coverage.lifecycleGaps[0]!.stage, "lifecycle");
+  assert.equal(externalRequirementOutcomes(incomplete)[0]!.verdict, "UNVERIFIABLE"); assert.equal(externalRequirementOutcomes(incomplete)[0]!.evidenceIds.length, 1);
   assert.equal((await readExternalEvidence(fixture.dataDir, run.runId, run.evidenceIds[0]!) as any).response.status, 200);
 }));
 

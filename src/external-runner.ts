@@ -148,10 +148,21 @@ export async function readExternalEvidence(dataDir: string, runId: string, evide
   return sealedRead(join(directory(dataDir, runId), "observations", `${evidenceId}.json`));
 }
 
+/** Public conclusions include lifecycle gaps; intermediate successful checks are not final passes. */
+export function externalRequirementOutcomes(run: Awaited<ReturnType<typeof readExternalRun>>) {
+  return run.coverage.requirements.map(item => {
+    const executed = run.report?.requirements.find(requirement => requirement.requirementId === item.requirementId);
+    return { requirementId: item.requirementId, normalized: item.normalized, sourceRefs: item.sourceRefs, verdict: item.verdict,
+      reason: executed ? executed.verdict === item.verdict ? executed.reason : `${executed.reason}；本次运行未完整结束：${run.reason}` : run.reason,
+      evidenceIds: [...new Set(item.checks.flatMap(check => check.steps.flatMap(step => step.evidenceId ? [step.evidenceId] : [])))] };
+  });
+}
+
 export function renderExternalRun(run: Awaited<ReturnType<typeof readExternalRun>>): string {
   const symbols = { VERIFIED: "✅ 已验证", FAILED: "❌ 验证失败", UNVERIFIABLE: "⚠ 无法验证" };
   const lines = [`# VibeGuard｜${symbols[run.verdict]}`, "", run.reason, ""];
   lines.push(run.captureCheck.status === "checked_at_capture" ? `对话核对：${run.captureCheck.taskRef}（${run.captureCheck.conversationSha256}）` : "对话核对：历史记录未登记执行时快照", run.captureCheck.meaning, "");
+  if (run.captureCheck.status === "checked_at_capture" && run.captureCheck.acceptanceRequest) lines.push(`验收请求：${run.captureCheck.acceptanceRequest.quote}（消息 ${run.captureCheck.acceptanceRequest.messageId}）`, "");
   const counts = run.coverage.counts;
   lines.push(`要求：${counts.totalRequirements} 条；计划完整：${counts.fullyPlannedRequirements} 条；已验证：${counts.verifiedRequirements} 条；失败：${counts.failedRequirements} 条；无法验证：${counts.unverifiableRequirements} 条。`,
     `计划步骤：${counts.plannedSteps}；已取得响应：${counts.responseSteps}。响应不等于检查通过，条目齐全不保证理解无遗漏。`, "");

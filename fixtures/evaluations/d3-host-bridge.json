@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "origin": "synthetic-developer-authored",
+  "requirement": "提供服务身份接口，HTTP 200 返回 JSON：service 为 atlas-worker，revision 为 7。",
+  "apiProfile": {
+    "schemaVersion": 1,
+    "profileId": "identity-test-api",
+    "description": "本地隔离服务身份接口，字段预期来自本次要求，示例仅描述结构。",
+    "routes": [{"method":"GET","pathTemplate":"/identity","description":"读取服务身份，成功 HTTP 200，返回 JSON service（字符串）和 revision（整数）。","successStatus":200,"responseExample":{"service":"example","revision":0}}],
+    "isolationRules": []
+  },
+  "correctScript": "import http from 'node:http';http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');if(req.url==='/health'){res.end(JSON.stringify({ready:true}));return}if(req.method==='GET'&&req.url==='/identity'){res.end(JSON.stringify({service:'atlas-worker',revision:7}));return}res.statusCode=404;res.end(JSON.stringify({error:'NOT_FOUND'}))}).listen(Number(process.env.PORT),'127.0.0.1');",
+  "faultyScript": "import http from 'node:http';http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');if(req.url==='/health'){res.end(JSON.stringify({ready:true}));return}if(req.method==='GET'&&req.url==='/identity'){res.end(JSON.stringify({service:'atlas-worker',revision:8}));return}res.statusCode=404;res.end(JSON.stringify({error:'NOT_FOUND'}))}).listen(Number(process.env.PORT),'127.0.0.1');"
+}

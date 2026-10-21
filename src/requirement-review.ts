@@ -10,6 +10,7 @@ import type { Resolution } from "./requirements.js";
 import { readTask, RefSchema } from "./task-registry.js";
 import { readSelectedScopeParent, readTaskIntake } from "./task-scope.js";
 import { sha256 } from "./storage.js";
+import { isAcceptanceCommand } from "./acceptance-command.js";
 import {
   applyReviewReplyProposal, reviewReplyInput, reviewReplyInputHash, ReviewReplyInterpretationSchema, ReviewReplyProposalSchema,
   type ReviewReplyGateway, type ReviewReplyInterpretation,
@@ -360,7 +361,7 @@ async function readReview(dataDir: string, reviewRef: string, visited: Set<strin
 }
 
 /** This is planning input only. It never changes the original Resolution or produces a verdict. */
-export async function confirmedRequirementSnapshot(dataDir: string, reviewRef: string, currentTaskRef?: string) {
+export async function confirmedRequirementSnapshot(dataDir: string, reviewRef: string, currentTaskRef?: string, options: { allowAcceptanceCommand?: boolean } = {}) {
   const review = await readRequirementReview(dataDir, reviewRef);
   try {
     ReceiptSchema.parse(JSON.parse(await readFile(receiptPath(dataDir, reviewRef), "utf8")));
@@ -371,6 +372,7 @@ export async function confirmedRequirementSnapshot(dataDir: string, reviewRef: s
   const base = await baseMaterial(dataDir, review.taskRef, review.resolutionId);
   if (base.issues.length || base.resolution.unprocessedUserMessageIds.length || base.resolution.processing.some(item => item.status !== "processed")) throw new Error("Original material or requirement processing remains incomplete");
   if (!review.items.some(item => item.status === "active")) throw new Error("No active requirements remain for planning");
+  let acceptanceRequest: { messageId: string; quote: string } | undefined;
   let currentness: { currentness: "historical_version"; requiresFreshCaptureBeforePlanning: true } | { currentness: "checked_at_capture"; checkedConversationSha256: string; requiresFreshCaptureBeforePlanning: false } = { currentness: "historical_version", requiresFreshCaptureBeforePlanning: true };
   if (currentTaskRef) {
     const task = await readTask(dataDir, currentTaskRef), current = await readTaskIntake(dataDir, task);
@@ -380,11 +382,15 @@ export async function confirmedRequirementSnapshot(dataDir: string, reviewRef: s
     if (anchor.rawSha256 !== review.anchorConversationSha256 || current.structuralIssues.length || conversation.transcriptCoverage.missingMessageIds.length || (review.host === "codex-app-server" && (!ledger || !ledger.allReturnedPagesRead))) throw new Error("Currentness capture contains structural, pagination or missing-message gaps");
     if (conversation.transcriptCoverage.level !== "complete" && !(conversation.transcriptCoverage.level === "partial" && ledger?.scopeOnlyGap && ledger.allReturnedPagesRead)) throw new Error("Currentness capture history coverage is unknown");
     if (conversation.messages.length < original.length || original.some((item, index) => { const next = conversation.messages[index]; return !next || item.id !== next.id || item.sequence !== next.sequence || item.role !== next.role || item.text !== next.text; })) throw new Error("Currentness capture prefix differs from the confirmed review anchor");
-    if (conversation.messages.slice(original.length).some(item => item.role === "user")) throw new Error("New user messages require review before this version can be treated as current");
+    const newUsers = conversation.messages.slice(original.length).filter(item => item.role === "user");
+    if (newUsers.length) {
+      if (!options.allowAcceptanceCommand || !newUsers.every(item => isAcceptanceCommand(item.text))) throw new Error("New user messages require review before this version can be treated as current");
+      acceptanceRequest = { messageId: newUsers.at(-1)!.id, quote: newUsers.at(-1)!.text };
+    }
     if (hash(conversation.materialGaps ?? []) !== hash(anchor.conversation.materialGaps ?? []) || hash(ledger?.unparsedUserContent ?? []) !== hash(anchor.conversation.hostCapture?.unparsedUserContent ?? [])) throw new Error("Currentness capture attachment or material ledger changed");
     currentness = { currentness: "checked_at_capture", checkedConversationSha256: current.rawSha256, requiresFreshCaptureBeforePlanning: false };
   }
   return { schemaVersion: 1 as const, kind: "confirmed_requirements_only" as const, reviewRef, reviewHash: review.contentHash, taskRef: review.taskRef,
     resolutionId: review.resolutionId, baseConversationSha256: review.baseConversationSha256, confirmation: review.confirmation,
-    ...currentness, requirements: review.items.filter(item => item.status === "active"), meaning: "仅供后续生成验收计划；不是执行证据、业务执行授权，也不是验收通过。当前性只针对明确核对过的采集时点。" };
+    ...currentness, ...(acceptanceRequest ? { acceptanceRequest } : {}), requirements: review.items.filter(item => item.status === "active"), meaning: "仅供后续生成验收计划；不是执行证据、业务执行授权，也不是验收通过。当前性只针对明确核对过的采集时点。" };
 }

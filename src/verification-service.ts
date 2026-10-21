@@ -27,6 +27,10 @@ import {
 } from "./requirement-review.js";
 import type { ReviewReplyGateway } from "./review-reply-intent.js";
 import { inspectExternalProject, readExternalProject } from "./external-project.js";
+import { consumeExecutionTicket, issueExecutionTicket } from "./host-execution-ticket.js";
+import { checkExecutionCapture } from "./execution-capture.js";
+import { readExternalPlan } from "./external-plan.js";
+import { externalRequirementOutcomes, readExternalEvidence, readExternalRun, renderExternalRun, runExternalPlan } from "./external-runner.js";
 
 export interface VerificationRecord {
   schemaVersion: 1;
@@ -53,6 +57,9 @@ export interface VerificationRecord {
   reportRunId?: string;
   interpretedUnits?: InterpretedUnit[];
   externalProject?: Awaited<ReturnType<typeof inspectExternalProject>>;
+  externalPlanRef?: string;
+  externalTicketRef?: string;
+  externalRunRef?: string;
   requirements: { requirementId: string; normalized: string; sourceRefs: SourceRef[]; verdict: Verdict; reason: string; evidenceIds: string[] }[];
 }
 
@@ -61,6 +68,37 @@ export class VerificationService {
   private active = new Map<string, Promise<void>>();
 
   constructor(private dataDir: string, private gateway: RequirementGateway, private modelIdentity: string, private scopeGateway?: TaskScopeGateway, private reviewGateway?: ReviewReplyGateway) {}
+
+  /** Fixed-session fallback captures independently; caller-supplied task references are ignored. */
+  async requestCapturedExternal(planRef: string, taskRef: string, scope: "checkpoint" | "final") {
+    const capture = await checkExecutionCapture(this.dataDir, (await readExternalPlan(this.dataDir, planRef)).record, taskRef);
+    const ticket = await issueExecutionTicket(this.dataDir, planRef, taskRef, "codex", capture.sessionId, `bound-mcp-${randomUUID()}`, scope);
+    return this.requestExternal(planRef, ticket, taskRef, scope);
+  }
+
+  async requestExternal(planRef: string, ticketRef: string, taskRef: string | undefined, scope: "checkpoint" | "final"): Promise<Record<string, unknown>> {
+    const ticket = await consumeExecutionTicket(this.dataDir, ticketRef, planRef, taskRef, scope);
+    const key = sha256(JSON.stringify({ host: ticket.capture.host, sessionId: ticket.capture.sessionId, request: ticket.capture.acceptanceRequest!.messageId, planRef, scope }));
+    const runId = `${key.slice(0, 8)}-${key.slice(8, 12)}-8${key.slice(13, 16)}-a${key.slice(17, 20)}-${key.slice(20, 32)}`;
+    await mkdir(join(this.dataDir, "verifications"), { recursive: true });
+    try { await mkdir(this.directory(runId)); }
+    catch (error) { if (!hasCode(error, "EEXIST")) throw error; return { ...await this.get(runId), reused: true }; }
+    const record: VerificationRecord = { schemaVersion: 1, runId, taskRef: ticket.capture.taskRef, scope, trigger: "manual", ownerInstanceId: this.instanceId,
+      conversationSha256: ticket.capture.conversationSha256, startedAt: new Date().toISOString(), status: "running", issues: [], requirements: [], externalPlanRef: planRef, externalTicketRef: ticketRef };
+    await this.save(record);
+    const work = (async () => {
+      try {
+        const result = await runExternalPlan(this.dataDir, planRef, { currentTaskRef: ticket.capture.taskRef });
+        record.externalRunRef = result.runId; record.verdict = result.verdict;
+        record.requirements = externalRequirementOutcomes(result);
+        if (result.verdict === "UNVERIFIABLE") { record.gapStage = "execution"; record.issues = [result.reason]; }
+      } catch (error) { record.verdict = "UNVERIFIABLE"; record.gapStage = "execution"; record.issues = [error instanceof Error ? error.message : String(error)]; }
+      record.status = "completed"; record.completedAt = new Date().toISOString(); await this.save(record);
+    })().catch(error => console.error(`VibeGuard external run ${runId} could not persist completion: ${error instanceof Error ? error.message : String(error)}`))
+      .finally(() => this.active.delete(runId));
+    this.active.set(runId, work);
+    return { ...await this.get(runId), reused: false };
+  }
 
   async request(taskRef: string, forceRerun = false, taskSelection?: TaskSelection, requirementReview?: RequirementReviewSelection): Promise<Record<string, unknown>> {
     if (taskSelection && requirementReview) throw new Error("不能同时选择任务范围和回复要求清单。");
@@ -116,6 +154,14 @@ export class VerificationService {
       const owned = record.ownerInstanceId === this.instanceId && this.active.has(runId);
       return { runId, taskRef: record.taskRef, scope: record.scope, status: owned ? "running" : "indeterminate", ...(owned ? {} : { verdict: "UNVERIFIABLE", issues: ["本进程无法确认此前未完成的运行是否仍在其他进程执行；可能已中断。可稍后查询或明确要求复验。"] }) };
     }
+    if (record.externalRunRef) {
+      const run = await readExternalRun(this.dataDir, record.externalRunRef);
+      if (run.planRef !== record.externalPlanRef || run.captureCheck.status !== "checked_at_capture" || run.captureCheck.taskRef !== record.taskRef || run.captureCheck.conversationSha256 !== record.conversationSha256) throw new Error("External verification source binding mismatch");
+      return { runId, taskRef: record.taskRef, scope: record.scope, trigger: "manual", status: "completed", verdict: run.verdict,
+        kind: "external-http-verification", externalRunRef: run.runId, requirements: externalRequirementOutcomes(run),
+        captureCheck: run.captureCheck, coverage: run.coverage, targetSnapshotHash: run.targetSnapshotHash, issues: record.issues, limitations: run.limitations,
+        ...(includeReport ? { report: run, acceptancePlan: run.acceptance, text: renderExternalRun(run) } : {}) };
+    }
     if (record.reportRunId) {
       const report = await readPlannedRun(this.dataDir, record.reportRunId);
       if (report.conversationSha256 !== record.conversationSha256) throw new Error("Report conversation differs from registered task");
@@ -169,7 +215,7 @@ export class VerificationService {
         ...(review.status !== "confirmed" ? ["用户对当前要求清单的确认"] : []),
         "针对交付快照的实际运行检查记录",
       ] : [...(record.materialGaps?.length ? record.materialGaps.map(item => item.detail) : record.gapStage === "scope" ? ["用户对本次任务范围的明确选择"] : record.gapStage === "execution" ? ["针对交付快照的实际运行检查记录"] : ["完整且无未确定要求的任务材料"]), ...(record.textCoverage?.unresolvedUnits ? [`仍有 ${record.textCoverage.unresolvedUnits} 个可见文字片段需要解释。`] : [])],
-      nextStep: record.externalProject ? "外部项目副本与要求版本已绑定。尚需生成验收计划并在 Docker 中执行；准备成功不能视为任务通过。工作区有新修改时重新准备快照。" : review ? review.status === "confirmed"
+      nextStep: record.externalPlanRef ? "执行未取得完成证据，查看 issues 中的实际错误；恢复条件后发送新的独立验收请求。" : record.externalProject ? "外部项目副本与要求版本已绑定。尚需生成验收计划并在 Docker 中执行；准备成功不能视为任务通过。工作区有新修改时重新准备快照。" : review ? review.status === "confirmed"
         ? review.materialIssues.length ? "要求理解已确认，材料缺口仍保留。补齐材料后需登记新快照重新审查；没有执行证据仍无法验证。" : !review.items.some(item => item.status === "active") ? "本次清单没有有效验收目标，已保存排除记录；新增目标后再验收，不会因此宣布通过。" : "已保存这版确认的要求；规划前须重新核对当前聊天。外部项目执行尚未接入，需项目运行配置和隔离执行能力。不得把确认理解当作验收通过。"
         : "将 requirementReview.text 作为完整独立消息原样展示（含短标识，不加前后附言）。用户可直接修改、取消、合并、补充要求，或说明 Q 编号的去向；真实回复后重新采集并传 requirementReview={reviewRef}。修改后展示新清单，再确认。"
         : record.gapStage === "scope" ? "展示 taskScopeReview。请用户选择候选的 confirmationReply（含本次短编号）或要求调整；真实回复后通过采集 Hook 重新调用 verify_task，传入 taskSelection。选择不代表验收通过。" : record.gapStage === "execution" ? "该任务已整理要求，但外部项目执行尚未接入；需要项目运行配置和隔离执行能力。" : record.selectedScope && record.gapStage === "material" ? `${record.requirementsStatus ? "已尝试整理可见文字候选，不能据此执行计划或宣布通过。" : ""}范围已经确认，无须再次选择。请按 materialGaps 中的消息引用补齐材料，再登记新快照复验；现有结论不变为通过。` : "补齐材料或确认含糊要求后，登记新的任务快照再验收。",
@@ -180,6 +226,13 @@ export class VerificationService {
     RefSchema.parse(evidenceId);
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 8000) throw new Error("Invalid evidence offset or limit");
     const record = await this.read(runId);
+    if (record.status === "completed" && record.externalRunRef) {
+      await this.get(runId); // Validate job -> archived run -> current-capture binding first.
+      const raw = JSON.stringify(await readExternalEvidence(this.dataDir, record.externalRunRef, evidenceId), null, 2) + "\n";
+      if (offset > raw.length) throw new Error("Evidence offset is beyond content length");
+      return { runId, evidenceId, sha256: sha256(raw), offset, totalChars: raw.length, truncated: offset > 0 || offset + limit < raw.length,
+        nextOffset: offset + limit < raw.length ? offset + limit : null, text: raw.slice(offset, offset + limit) };
+    }
     if (record.status !== "completed" || !record.reportRunId) throw new Error("This verification has no completed execution evidence");
     const report = await readPlannedRun(this.dataDir, record.reportRunId);
     if (report.conversationSha256 !== record.conversationSha256) throw new Error("Report conversation mismatch");
@@ -253,6 +306,9 @@ export class VerificationService {
         const record = JSON.parse(raw) as VerificationRecord;
         if (record.runId !== runId || record.schemaVersion !== 1) throw new Error("Verification record mismatch");
         if (record.reportRunId) RefSchema.parse(record.reportRunId);
+        if (record.externalRunRef) RefSchema.parse(record.externalRunRef);
+        if (record.externalPlanRef) RefSchema.parse(record.externalPlanRef);
+        if (record.externalTicketRef) RefSchema.parse(record.externalTicketRef);
         return record;
       } catch (error) {
         if (!hasCode(error, "ENOENT") || attempt >= 20) throw error;

@@ -12,7 +12,7 @@ import { prepareExternalProject } from "../../external-project.js";
 
 /** Synthetic original messages and approval, always labelled as such. No model or live host. */
 export async function prepareRuntimeFixture(directory: string, script: string, timeoutMs = 2000, options: { amendment?: string; quote?: string; dataDir?: string;
-  requirements?: { requirementId: string; quote: string }[] } = {}) {
+  requirements?: { requirementId: string; quote: string }[]; syntheticCodexSessionId?: string } = {}) {
   const dataDir = options.dataDir ?? join(directory, "data"), root = join(directory, "source");
   await mkdir(dataDir, { recursive: true }); await mkdir(root);
   await writeFile(join(root, "package.json"), JSON.stringify({ name: "synthetic-runtime-fixture", type: "module", private: true }));
@@ -22,8 +22,9 @@ export async function prepareRuntimeFixture(directory: string, script: string, t
     projectRoot: root, runtime: { kind: "docker", image: "node:24-bookworm-slim", command: ["node", "server.mjs"], containerPort: 3000, readiness: { path: "/health", timeoutMs } } });
   const profilePath = join(directory, "project.json"); await writeFile(profilePath, JSON.stringify(profile));
   const quote = options.quote ?? "启动一个可访问的文本服务。";
-  const source = ConversationSchema.parse({ schemaVersion: 1, taskId: "synthetic-runtime-task", sessionId: `synthetic-runtime-${randomUUID()}`, host: "synthetic-test-host",
+  const source = ConversationSchema.parse({ schemaVersion: 1, taskId: "synthetic-runtime-task", sessionId: options.syntheticCodexSessionId ?? `synthetic-runtime-${randomUUID()}`, host: options.syntheticCodexSessionId ? "codex-app-server" : "synthetic-test-host",
     taskBoundary: { startMessageId: "u1", endMessageId: "u1" }, transcriptCoverage: { level: "complete", source: "user_export", basis: "Synthetic runtime test only", missingMessageIds: [] },
+    ...(options.syntheticCodexSessionId ? { hostCapture: { allReturnedPagesRead: true, scopeOnlyGap: false, unparsedUserContent: [] } } : {}),
     messages: [{ id: "u1", role: "user", sequence: 1, text: quote }] });
   const task = async (conversation: Conversation) => {
     const path = join(directory, `${randomUUID()}.conversation.json`); await writeFile(path, JSON.stringify(conversation)); return registerTask(dataDir, path);
