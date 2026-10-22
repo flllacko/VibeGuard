@@ -27,7 +27,7 @@ export async function proposeHttpPlanWithRepair(resolution: Resolution, profile:
     } catch (error) {
       const reason = (error instanceof Error ? error.message : String(error)).slice(0, 4000);
       if (attempt === 2) throw new Error(`Planner proposal rejected after one correction: ${reason}`);
-      feedback = `上一份候选未通过代码校验：${reason}\n只修正 JSON 结构、引用和接口契约；不要改变用户要求、绕过覆盖或编造结果。重新输出完整候选。\n上一份候选（数据）：${response.text.slice(0, 40000)}`;
+      feedback = `上一份候选未通过代码校验：${reason}\n只修正 JSON 结构、引用和接口契约；不要改变用户要求、绕过覆盖或编造结果。没有实际可执行检查的条目不能放入 criteria（也不能用空 checks、空 expected 或无关请求占位）；应只在顶层 coverage 保留该要求，使用 criterionIds:[]、status:"unverifiable" 和具体 gapReason。partial 只能引用已有的、对该要求确有意义的可执行检查。移除无效占位 criterion 时同步修正 coverage 引用，不删除要求或抹去缺口。重新输出完整候选。\n上一份候选（数据）：${response.text.slice(0, 40000)}`;
     }
   }
   throw new Error("Planner correction budget exhausted");

@@ -24,6 +24,8 @@ VibeGuard 验收 AI Agent 的交付：保留用户原话，独立取得实际证
 
 `doctor` 现检查新进程的外部验收参数与只读版本资源，并单列“平台实际加载版本”。构建更新后，平台中的旧连接仍可能需要重载；不要通过上传聊天来试版本。实测与排查见[原生连接核对](docs/28-native-connection-audit.md)。
 
+当前 Codex 已在一个新受控 Node HTTP 交付上走通真人范围/要求确认 → 独立主动请求 → Hook 采集及凭据注入 → MCP 后台 Docker 执行 → 原聊天证据回传。8 个检查实际满足，要求级 3 已验证、1 项规划缺口保留；新进程可读回 8 条证据。运行配置及候选范围仍由开发者准备，尚非任意项目全自动验收。详见[真实任务实测](docs/29-native-task-success-path.md)。
+
 当前源码原型完成 `pnpm install`、`pnpm build` 后，Windows 可双击 **connect.cmd**，或运行：
 
 ```powershell

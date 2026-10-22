@@ -216,9 +216,9 @@ export class VerificationService {
         "针对交付快照的实际运行检查记录",
       ] : [...(record.materialGaps?.length ? record.materialGaps.map(item => item.detail) : record.gapStage === "scope" ? ["用户对本次任务范围的明确选择"] : record.gapStage === "execution" ? ["针对交付快照的实际运行检查记录"] : ["完整且无未确定要求的任务材料"]), ...(record.textCoverage?.unresolvedUnits ? [`仍有 ${record.textCoverage.unresolvedUnits} 个可见文字片段需要解释。`] : [])],
       nextStep: record.externalPlanRef ? "执行未取得完成证据，查看 issues 中的实际错误；恢复条件后发送新的独立验收请求。" : record.externalProject ? "外部项目副本与要求版本已绑定。尚需生成验收计划并在 Docker 中执行；准备成功不能视为任务通过。工作区有新修改时重新准备快照。" : review ? review.status === "confirmed"
-        ? review.materialIssues.length ? "要求理解已确认，材料缺口仍保留。补齐材料后需登记新快照重新审查；没有执行证据仍无法验证。" : !review.items.some(item => item.status === "active") ? "本次清单没有有效验收目标，已保存排除记录；新增目标后再验收，不会因此宣布通过。" : "已保存这版确认的要求；规划前须重新核对当前聊天。外部项目执行尚未接入，需项目运行配置和隔离执行能力。不得把确认理解当作验收通过。"
+        ? review.materialIssues.length ? "要求理解已确认，材料缺口仍保留。补齐材料后需登记新快照重新审查；没有执行证据仍无法验证。" : !review.items.some(item => item.status === "active") ? "本次清单没有有效验收目标，已保存排除记录；新增目标后再验收，不会因此宣布通过。" : "已保存这版确认的要求；规划前须重新核对当前聊天。接下来提供项目运行配置、准备交付快照并生成验收计划，再通过独立验收请求执行；本次尚无执行证据，确认理解不等于验收通过。"
         : "将 requirementReview.text 作为完整独立消息原样展示（含短标识，不加前后附言）。用户可直接修改、取消、合并、补充要求，或说明 Q 编号的去向；真实回复后重新采集并传 requirementReview={reviewRef}。修改后展示新清单，再确认。"
-        : record.gapStage === "scope" ? "展示 taskScopeReview。请用户选择候选的 confirmationReply（含本次短编号）或要求调整；真实回复后通过采集 Hook 重新调用 verify_task，传入 taskSelection。选择不代表验收通过。" : record.gapStage === "execution" ? "该任务已整理要求，但外部项目执行尚未接入；需要项目运行配置和隔离执行能力。" : record.selectedScope && record.gapStage === "material" ? `${record.requirementsStatus ? "已尝试整理可见文字候选，不能据此执行计划或宣布通过。" : ""}范围已经确认，无须再次选择。请按 materialGaps 中的消息引用补齐材料，再登记新快照复验；现有结论不变为通过。` : "补齐材料或确认含糊要求后，登记新的任务快照再验收。",
+        : record.gapStage === "scope" ? "展示 taskScopeReview。请用户选择候选的 confirmationReply（含本次短编号）或要求调整；真实回复后通过采集 Hook 重新调用 verify_task，传入 taskSelection。选择不代表验收通过。" : record.gapStage === "execution" ? "该任务已整理要求，但本次尚未绑定可执行的验收计划；需确认要求、提供项目运行配置并准备交付，再生成计划并实际执行取证。" : record.selectedScope && record.gapStage === "material" ? `${record.requirementsStatus ? "已尝试整理可见文字候选，不能据此执行计划或宣布通过。" : ""}范围已经确认，无须再次选择。请按 materialGaps 中的消息引用补齐材料，再登记新快照复验；现有结论不变为通过。` : "补齐材料或确认含糊要求后，登记新的任务快照再验收。",
     };
   }
 

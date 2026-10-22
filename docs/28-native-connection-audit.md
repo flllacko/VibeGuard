@@ -2,6 +2,32 @@
 
 日期：2026-10-21。这里只验证连接与材料，不是一次任务功能验收。
 
+## 重载后：原生 Hook 自动采集与拒绝分支已实测
+
+同日用户重载后，当前 Codex 暴露的 `verify_task` 已包含 `externalPlanRef` / `captureTicket`，原生资源列表及 `vibeguard://connection` 返回预期版本。下文“参数仍旧”属于首轮历史观察。
+
+用不存在的计划 `0c61b9f7-1d1a-4c99-98ad-5a79536ca320` 发起两次故障探测：
+
+- 宿主实际派发 `PreToolUse`，没有构造 Hook 载荷或注入采集回调；两次均先产生本地采集，再由 Hook 阻止 MCP 调用。
+- 分别保存 `3570186b-ae60-45e3-b87d-8c3292cd654d`、`d316830b-cae6-48ba-972c-3b4e7cfb2a68`。读完 4 页，78 条用户与 323 条助手消息，身份是本聊天；截止消息 `01a15e6f-9a90-7c02-b318-c4ce92478a3f` 的原文为“继续”。
+- 两份会话正文摘要相同，原始响应及会话副本的哈希均与各自收据一致。2 项非文字缺口保留，业务范围仍未确认。
+- 首次通用错误把采集成功也表述为“未能取得材料”。已按执行阶段改为 `[VG_INPUT]` 输入/宿主身份、`[VG_CAPTURE]` 采集、`[VG_BINDING]` 计划与确认要求绑定，入口异常为 `[VG_STARTUP]`。不回显原始异常、路径或输入内容。
+- 修复后原生探测实际返回 `[VG_BINDING] 已取得当前会话快照，但无法绑定本次计划和已确认要求`，并阻止执行。这个分类不进一步声称已经区分计划不存在、损坏、版本过期或确认缺口。
+
+阻止与参数改写的协议依据为 [OpenAI Docs：Hooks](https://learn.chatgpt.com/docs/hooks)。本次仅实测阻止分支；**成功签发凭据、原生参数改写、后台项目验收与报告回传仍未执行**。故障探测不证明一个业务任务通过，也没有用不存在的计划绕过用户要求审查。
+
+本轮构建成功，165 项测试通过。受限进程首轮 7 项中 1 项因沙箱临时目录 `rename ... -> started.json` 返回 `EPERM` 失败；补充失败输出后仍同样失败，未改验收标准。同一代码在普通权限下全套通过。运行命令：
+
+```powershell
+node node_modules/typescript/bin/tsc --project tsconfig.json
+node --test dist/tests/hook-failure-stages.test.js dist/tests/host-external-execution.test.js
+node --test dist/tests/*.test.js
+```
+
+仍是 **0 次模型调用、0 次项目执行、0 项全局配置修改**。原生探测及测试记录在 `.vibeguard/evaluations/native-hook-20261021/`，含两次调用结果、前后采集编号、原生参数/资源、完整成功测试日志、`summary.json` 及独立读回脚本 `audit.mjs`；实际原始采集位于 `.vibeguard/host-snapshots/codex/`。含私有对话，不纳入 Git。下一步准备真实原话对应且已确认的小任务计划，实测原生成功路径，不以合成完整材料替换当前长聊天。
+
+## 首轮核对（重载前）
+
 ## 为什么加这一步
 
 构建更新了磁盘上的代码，平台已连接的 MCP 进程或工具参数缓存却可能还停在旧版。只看到三个工具名称不能证明它支持外部项目验收。

@@ -127,6 +127,6 @@ export async function externalPlanView(dataDir: string, planRef: string) {
       unverifiable: record.plan.coverage.filter(item => item.status === "unverifiable").length,
       meaning: "仅为计划覆盖账目，不是已验证数量、置信度或语义完整性保证。" },
     acceptance, text: renderAcceptancePlan(acceptance),
-    missingEvidence: ["计划尚未接入 Docker 中的功能检查", "各项标准的实际执行观察"],
+    missingEvidence: ["尚未执行本计划的 Docker 功能检查", "各项标准的实际执行观察"],
     meaning: "要求原话、标准与执行步骤已关联；尚未执行，不是验收通过，也不授权执行任意 API。" };
 }

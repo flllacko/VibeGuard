@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "id": "input-domain-count-37",
+  "origin": "synthetic-developer-authored",
+  "requirement": "提供 HTTP 接口，接收一个整数 count。count 不小于 37 时返回 JSON {\"flag\":true}，小于 37 时返回 {\"flag\":false}。",
+  "apiProfile": {
+    "schemaVersion": 1,
+    "profileId": "synthetic-count",
+    "description": "本地测试接口；本配置说明调用方式，不规定范围外输入的错误状态或格式。",
+    "routes": [
+      {
+        "method": "POST",
+        "pathTemplate": "/classify",
+        "description": "JSON 请求 count；范围内整数输入成功时 HTTP 200，JSON 响应 flag 为布尔值。",
+        "successStatus": 200,
+        "requestExample": {
+          "count": 0
+        },
+        "responseExample": {
+          "flag": false
+        }
+      }
+    ],
+    "isolationRules": []
+  },
+  "confirmedRequirements": [
+    {
+      "requirementId": "input",
+      "quote": "提供 HTTP 接口，接收一个整数 count。"
+    },
+    {
+      "requirementId": "branch",
+      "quote": "count 不小于 37 时返回 JSON {\"flag\":true}，小于 37 时返回 {\"flag\":false}。"
+    }
+  ],
+  "expectedPlanningCoverage": [
+    {
+      "requirementId": "input",
+      "status": "planned"
+    },
+    {
+      "requirementId": "branch",
+      "status": "planned"
+    }
+  ],
+  "variants": [
+    {
+      "id": "correct",
+      "script": "import http from 'node:http';http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');if(req.url==='/health'){res.end('{\"ready\":true}');return}if(req.method!=='POST'||req.url!=='/classify'){res.statusCode=404;res.end('{}');return}let text='';req.on('data',chunk=>text+=chunk);req.on('end',()=>{try{const {count}=JSON.parse(text);if(!Number.isInteger(count))throw Error('integer');res.end(JSON.stringify({flag:count>=37}))}catch{res.statusCode=400;res.end('{}')}})}).listen(Number(process.env.PORT),'127.0.0.1');",
+      "expectedVerdict": "VERIFIED"
+    },
+    {
+      "id": "faulty",
+      "script": "import http from 'node:http';http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');if(req.url==='/health'){res.end('{\"ready\":true}');return}if(req.method!=='POST'||req.url!=='/classify'){res.statusCode=404;res.end('{}');return}let text='';req.on('data',chunk=>text+=chunk);req.on('end',()=>{try{const {count}=JSON.parse(text);if(!Number.isInteger(count))throw Error('integer');res.end(JSON.stringify({flag:count>37}))}catch{res.statusCode=400;res.end('{}')}})}).listen(Number(process.env.PORT),'127.0.0.1');",
+      "expectedVerdict": "FAILED"
+    },
+    {
+      "id": "unavailable",
+      "script": "console.error('Synthetic unavailable delivery');process.exit(9);",
+      "expectedVerdict": "UNVERIFIABLE"
+    }
+  ],
+  "oracle": [
+    {
+      "method": "POST",
+      "path": "/classify",
+      "body": {
+        "count": 36
+      },
+      "expectedStatus": 200,
+      "pointer": "/flag",
+      "equals": false
+    },
+    {
+      "method": "POST",
+      "path": "/classify",
+      "body": {
+        "count": 37
+      },
+      "expectedStatus": 200,
+      "pointer": "/flag",
+      "equals": true
+    }
+  ]
+}

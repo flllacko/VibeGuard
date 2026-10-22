@@ -36,7 +36,7 @@ async function fixture(directory: string) {
     session_id: sessionId, cwd: directory, tool_use_id: `call-${randomUUID()}`, tool_input: { externalPlanRef: plan.planRef, ...input } }), { host: "codex", dataDir: fixture.dataDir }, async () => ({ taskRef }));
   return { ...fixture, sessionId, plan, review, original, capture, hook };
 }
-const unpack = (result: CallToolResult): Record<string, any> => { assert.equal(result.isError, undefined); return result.structuredContent as Record<string, any>; };
+const unpack = (result: CallToolResult): Record<string, any> => { assert.equal(result.isError, undefined, JSON.stringify(result)); return result.structuredContent as Record<string, any>; };
 
 test("Hook always replaces caller task/ticket for external execution; reserved request stays in raw source but is not a business amendment", async () => temporary(async directory => {
   const f = await fixture(directory), output = await f.hook({ taskRef: randomUUID(), captureTicket: randomUUID() });
@@ -59,6 +59,7 @@ test("mixed requests, unreviewed earlier changes and capture failure cannot obta
     tool_use_id: "capture-error", tool_input: { externalPlanRef: f.plan.planRef, taskRef: f.capture.task.taskRef } }), { host: "codex", dataDir: f.dataDir },
     async () => { failedCaptures++; throw new Error("PRIVATE_CAPTURE_FAILURE"); });
   assert.equal(failedCaptures, 1); assert.equal(unavailable.hookSpecificOutput!.permissionDecision, "deny"); assert.equal(JSON.stringify(unavailable).includes("PRIVATE_CAPTURE_FAILURE"), false);
+  assert.match(unavailable.hookSpecificOutput!.permissionDecisionReason!, /\[VG_CAPTURE\]/);
   for (const [index, text] of ["用 VibeGuard 验收，另加一个功能", "请验收一下", "他说：用 VibeGuard 验收"].entries()) {
     const capture = await registerEvaluationReply(f.dataDir, f.original.conversation, f.review, text, join(directory, `invalid-${index}.json`));
     assert.equal((await f.hook({}, capture.task.taskRef)).hookSpecificOutput!.permissionDecision, "deny");

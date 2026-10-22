@@ -1,0 +1,357 @@
+[
+  {
+    "id": "integer-domain",
+    "requirements": [
+      {
+        "id": "input",
+        "text": "提供 HTTP 接口，接收一个整数 count。"
+      },
+      {
+        "id": "branch",
+        "text": "count 不小于 37 时返回 JSON {\"flag\":true}，小于 37 时返回 {\"flag\":false}。"
+      }
+    ],
+    "apiProfile": {
+      "schemaVersion": 1,
+      "profileId": "synthetic-count",
+      "description": "本地测试接口；本配置说明调用方式，不规定范围外输入的错误状态或格式。",
+      "routes": [
+        {
+          "method": "POST",
+          "pathTemplate": "/classify",
+          "description": "JSON 请求 count；范围内整数输入成功时 HTTP 200，JSON 响应 flag 为布尔值。",
+          "successStatus": 200,
+          "requestExample": {
+            "count": 0
+          },
+          "responseExample": {
+            "flag": false
+          }
+        }
+      ],
+      "isolationRules": []
+    },
+    "expected": {
+      "coverage": {
+        "input": "planned",
+        "branch": "planned"
+      },
+      "inputDomainOnly": {
+        "field": "count",
+        "type": "integer"
+      },
+      "steps": [
+        {
+          "body": {
+            "count": 36
+          },
+          "status": 200,
+          "pointer": "/flag",
+          "equals": false
+        },
+        {
+          "body": {
+            "count": 37
+          },
+          "status": 200,
+          "pointer": "/flag",
+          "equals": true
+        }
+      ]
+    }
+  },
+  {
+    "id": "integer-explicit-rejection",
+    "requirements": [
+      {
+        "id": "input",
+        "text": "提供 HTTP 接口，接收一个整数 count。"
+      },
+      {
+        "id": "branch",
+        "text": "count 不小于 37 时返回 JSON {\"flag\":true}，小于 37 时返回 {\"flag\":false}。"
+      },
+      {
+        "id": "reject",
+        "text": "count 为非整数数值时必须返回 HTTP 422 和 JSON {\"error\":\"integer_required\"}。"
+      }
+    ],
+    "apiProfile": {
+      "schemaVersion": 1,
+      "profileId": "synthetic-count",
+      "description": "本地测试接口；本配置说明调用方式，不规定范围外输入的错误状态或格式。",
+      "routes": [
+        {
+          "method": "POST",
+          "pathTemplate": "/classify",
+          "description": "JSON 请求 count；范围内整数输入成功时 HTTP 200，JSON 响应 flag 为布尔值。",
+          "successStatus": 200,
+          "requestExample": {
+            "count": 0
+          },
+          "responseExample": {
+            "flag": false
+          }
+        }
+      ],
+      "isolationRules": []
+    },
+    "expected": {
+      "coverage": {
+        "input": "planned",
+        "branch": "planned",
+        "reject": "planned"
+      },
+      "steps": [
+        {
+          "body": {
+            "count": 36
+          },
+          "status": 200,
+          "pointer": "/flag",
+          "equals": false
+        },
+        {
+          "body": {
+            "count": 37
+          },
+          "status": 200,
+          "pointer": "/flag",
+          "equals": true
+        }
+      ],
+      "rejectedFraction": {
+        "field": "count",
+        "pointer": "/error",
+        "status": 422,
+        "equals": "integer_required"
+      }
+    }
+  },
+  {
+    "id": "integer-rejection-unknown",
+    "requirements": [
+      {
+        "id": "input",
+        "text": "提供 HTTP 接口，接收一个整数 count。"
+      },
+      {
+        "id": "branch",
+        "text": "count 不小于 37 时返回 JSON {\"flag\":true}，小于 37 时返回 {\"flag\":false}。"
+      },
+      {
+        "id": "reject",
+        "text": "count 为非整数数值时必须返回错误，但本次不规定 HTTP 错误状态码或响应 JSON 内容。"
+      }
+    ],
+    "apiProfile": {
+      "schemaVersion": 1,
+      "profileId": "synthetic-count",
+      "description": "本地测试接口；本配置说明调用方式，不规定范围外输入的错误状态或格式。",
+      "routes": [
+        {
+          "method": "POST",
+          "pathTemplate": "/classify",
+          "description": "JSON 请求 count；范围内整数输入成功时 HTTP 200，JSON 响应 flag 为布尔值。",
+          "successStatus": 200,
+          "requestExample": {
+            "count": 0
+          },
+          "responseExample": {
+            "flag": false
+          }
+        }
+      ],
+      "isolationRules": []
+    },
+    "expected": {
+      "coverage": {
+        "input": "planned",
+        "branch": "planned",
+        "reject": "unverifiable"
+      },
+      "steps": [
+        {
+          "body": {
+            "count": 36
+          },
+          "status": 200,
+          "pointer": "/flag",
+          "equals": false
+        },
+        {
+          "body": {
+            "count": 37
+          },
+          "status": 200,
+          "pointer": "/flag",
+          "equals": true
+        }
+      ]
+    }
+  },
+  {
+    "id": "string-domain",
+    "requirements": [
+      {
+        "id": "input",
+        "text": "提供 HTTP 接口，接收字符串 text。"
+      },
+      {
+        "id": "trim",
+        "text": "把 text 两边的空格去掉，返回 JSON 的 cleaned 字段。"
+      }
+    ],
+    "apiProfile": {
+      "schemaVersion": 1,
+      "profileId": "synthetic-trim",
+      "description": "本地测试接口；错误行为若被要求，其预期以用户要求为准。",
+      "routes": [
+        {
+          "method": "POST",
+          "pathTemplate": "/trim",
+          "description": "JSON 请求 text；成功时 HTTP 200，JSON 响应 cleaned 为字符串。",
+          "successStatus": 200,
+          "requestExample": {
+            "text": "example"
+          },
+          "responseExample": {
+            "cleaned": "example"
+          }
+        }
+      ],
+      "isolationRules": []
+    },
+    "expected": {
+      "coverage": {
+        "input": "planned",
+        "trim": "planned"
+      },
+      "inputDomainOnly": {
+        "field": "text",
+        "type": "string"
+      },
+      "steps": []
+    }
+  },
+  {
+    "id": "string-explicit-rejection",
+    "requirements": [
+      {
+        "id": "input",
+        "text": "提供 HTTP 接口，接收字符串 text。"
+      },
+      {
+        "id": "trim",
+        "text": "把 text 两边的空格去掉，返回 JSON 的 cleaned 字段。"
+      },
+      {
+        "id": "reject",
+        "text": "text 为空字符串时必须返回 HTTP 400 和 JSON {\"error\":\"empty_text\"}；其他字符串仍按上述要求去掉两边空格。"
+      }
+    ],
+    "apiProfile": {
+      "schemaVersion": 1,
+      "profileId": "synthetic-trim",
+      "description": "本地测试接口；错误行为若被要求，其预期以用户要求为准。",
+      "routes": [
+        {
+          "method": "POST",
+          "pathTemplate": "/trim",
+          "description": "JSON 请求 text；成功时 HTTP 200，JSON 响应 cleaned 为字符串。",
+          "successStatus": 200,
+          "requestExample": {
+            "text": "example"
+          },
+          "responseExample": {
+            "cleaned": "example"
+          }
+        }
+      ],
+      "isolationRules": []
+    },
+    "expected": {
+      "coverage": {
+        "input": "planned",
+        "trim": "planned",
+        "reject": "planned"
+      },
+      "steps": [
+        {
+          "body": {
+            "text": ""
+          },
+          "status": 400,
+          "pointer": "/error",
+          "equals": "empty_text"
+        }
+      ]
+    }
+  },
+  {
+    "id": "integer-missing-observer",
+    "requirements": [
+      {
+        "id": "input",
+        "text": "提供 HTTP 接口，接收一个整数 count。"
+      },
+      {
+        "id": "branch",
+        "text": "count 不小于 37 时返回 JSON {\"flag\":true}，小于 37 时返回 {\"flag\":false}。"
+      },
+      {
+        "id": "audit",
+        "text": "每次调用都写入持久化审计日志。"
+      }
+    ],
+    "apiProfile": {
+      "schemaVersion": 1,
+      "profileId": "synthetic-count",
+      "description": "本地测试接口；本配置说明调用方式，不规定范围外输入的错误状态或格式。",
+      "routes": [
+        {
+          "method": "POST",
+          "pathTemplate": "/classify",
+          "description": "JSON 请求 count；范围内整数输入成功时 HTTP 200，JSON 响应 flag 为布尔值。",
+          "successStatus": 200,
+          "requestExample": {
+            "count": 0
+          },
+          "responseExample": {
+            "flag": false
+          }
+        }
+      ],
+      "isolationRules": []
+    },
+    "expected": {
+      "coverage": {
+        "input": "planned",
+        "branch": "planned",
+        "audit": "unverifiable"
+      },
+      "inputDomainOnly": {
+        "field": "count",
+        "type": "integer"
+      },
+      "steps": [
+        {
+          "body": {
+            "count": 36
+          },
+          "status": 200,
+          "pointer": "/flag",
+          "equals": false
+        },
+        {
+          "body": {
+            "count": 37
+          },
+          "status": 200,
+          "pointer": "/flag",
+          "equals": true
+        }
+      ]
+    }
+  }
+]

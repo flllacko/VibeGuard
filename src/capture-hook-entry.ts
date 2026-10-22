@@ -32,5 +32,5 @@ async function main(): Promise<void> {
 }
 
 main().catch(() => {
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "VibeGuard 采集程序未能启动；请检查 Hook 的启动命令与参数。" } }) + "\n");
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "[VG_STARTUP] VibeGuard 采集程序未能启动或读取钩子输入；请检查 Hook 的启动命令与参数。" } }) + "\n");
 });
